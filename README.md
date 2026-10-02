@@ -47,6 +47,7 @@ npm run dev        # http://localhost:3000
 | `npm run dev` | Development server |
 | `npm run build` | Production build (typecheck + lint clean) |
 | `npm test` | Vitest unit tests (validation, scoping, audit diff) |
+| `npm run test:integration` | Integration tests against a separate test database (row-level security, IDOR, CSV import) |
 | `npm run db:migrate` | Create/apply migrations in development |
 | `npm run db:deploy` | Apply migrations in production (`prisma migrate deploy`) |
 | `npm run db:seed` | Seed demo data |
@@ -111,7 +112,12 @@ git push -u origin main
 
 4. Deploy.
 
-### 4. Run migrations + seed in production
+### 4. Integration tests (optional)
+
+   Create a second database in your Neon project (e.g. `crmglm_test`), apply the schema
+   (`npx prisma migrate deploy` with its DIRECT_URL), then run `npm run test:integration`.
+
+5. Run migrations + seed in production
 
 From your machine (pointing at the production DB):
 

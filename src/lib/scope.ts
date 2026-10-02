@@ -13,11 +13,9 @@ export interface ScopedUser {
 
 /**
  * Prisma `where` fragment restricting `field` to the user unless they are ADMIN.
- * Generic over the calling model's WhereInput so it composes at every call site:
- *   db.contact.findMany({ where: ownerFilter(user) })
- *   db.deal.findFirst({ where: { id, ...ownerFilter(user) } })
+ * Returns a plain object that composes with any Prisma WhereInput.
  */
-export function ownerFilter<W extends object>(user: ScopedUser, field = "ownerId"): W {
-  if (user.role === "ADMIN") return {} as W;
-  return { [field]: user.id } as W;
+export function ownerFilter(user: ScopedUser, field = "ownerId"): Record<string, unknown> {
+  if (user.role === "ADMIN") return {};
+  return { [field]: user.id };
 }

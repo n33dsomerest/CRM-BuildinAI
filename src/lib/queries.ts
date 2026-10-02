@@ -36,7 +36,8 @@ export interface DashboardData {
     totalContacts: number;
     wonDeals: number;
     wonValue: number;
-    conversionRate: number;
+    /** closed-won ÷ (closed-won + closed-lost) — open deals excluded */
+    winRate: number;
   };
   funnel: FunnelColumn[];
   recentActivities: ActivityRow[];
@@ -110,6 +111,57 @@ export interface Paged<T> {
   pageCount: number;
 }
 
+/* ── Shared mappers ──────────────────────────────────────────────────────── */
+
+/** Raw `stage.findMany({ include: { deals } })` row shape. */
+export interface StageWithDeals {
+  id: string;
+  name: string;
+  order: number;
+  probability: number;
+  isWon: boolean;
+  isLost: boolean;
+  deals: {
+    id: string;
+    title: string;
+    value: Prisma.Decimal;
+    expectedCloseDate: Date | null;
+    contactId: string;
+    contact: { name: string; account: { name: string } };
+    owner: { id: string; name: string };
+  }[];
+}
+
+/** Maps stage query rows (ordered by `order`) into funnel columns with totals. */
+export function mapStagesToFunnel(stages: StageWithDeals[]): FunnelColumn[] {
+  return stages.map((stage) => {
+    const deals: DealCard[] = stage.deals.map((d) => ({
+      id: d.id,
+      title: d.title,
+      value: Number(d.value),
+      stageId: stage.id,
+      expectedCloseDate: d.expectedCloseDate,
+      contactName: d.contact.name,
+      accountName: d.contact.account.name,
+      ownerName: d.owner.name,
+      ownerId: d.owner.id,
+      contactId: d.contactId,
+    }));
+    const totalValue = deals.reduce((sum, d) => sum + d.value, 0);
+    return {
+      id: stage.id,
+      name: stage.name,
+      order: stage.order,
+      probability: stage.probability,
+      isWon: stage.isWon,
+      isLost: stage.isLost,
+      deals,
+      totalValue,
+      weightedValue: Math.round((totalValue * stage.probability) / 100),
+    };
+  });
+}
+
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 
 export async function getDashboardData(user: ScopedUser): Promise<DashboardData> {
@@ -132,36 +184,13 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
     },
   });
 
-  const funnel: FunnelColumn[] = stages.map((stage) => {
-    const deals: DealCard[] = stage.deals.map((d) => ({
-      id: d.id,
-      title: d.title,
-      value: Number(d.value),
-      stageId: d.stageId,
-      expectedCloseDate: d.expectedCloseDate,
-      contactName: d.contact.name,
-      accountName: d.contact.account.name,
-      ownerName: d.owner.name,
-      ownerId: d.owner.id,
-      contactId: d.contactId,
-    }));
-    const totalValue = deals.reduce((sum, d) => sum + d.value, 0);
-    return {
-      id: stage.id,
-      name: stage.name,
-      order: stage.order,
-      probability: stage.probability,
-      isWon: stage.isWon,
-      isLost: stage.isLost,
-      deals,
-      totalValue,
-      weightedValue: Math.round((totalValue * stage.probability) / 100),
-    };
-  });
+  const funnel = mapStagesToFunnel(stages);
 
   const openStages = funnel.filter((s) => !s.isWon && !s.isLost);
   const wonStage = funnel.find((s) => s.isWon);
-  const totalDeals = funnel.reduce((sum, s) => sum + s.deals.length, 0);
+  const lostStage = funnel.find((s) => s.isLost);
+  const wonCount = wonStage?.deals.length ?? 0;
+  const lostCount = lostStage?.deals.length ?? 0;
 
   const [totalContacts, recentActivities, myTasks] = await Promise.all([
     db.contact.count({ where: ownerFilter(user) }),
@@ -191,9 +220,9 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
       pipelineValue: openStages.reduce((sum, s) => sum + s.totalValue, 0),
       weightedForecast: openStages.reduce((sum, s) => sum + s.weightedValue, 0),
       totalContacts,
-      wonDeals: wonStage?.deals.length ?? 0,
+      wonDeals: wonCount,
       wonValue: wonStage?.totalValue ?? 0,
-      conversionRate: totalDeals === 0 ? 0 : Math.round(((wonStage?.deals.length ?? 0) / totalDeals) * 100),
+      winRate: wonCount + lostCount === 0 ? 0 : Math.round((wonCount / (wonCount + lostCount)) * 100),
     },
     funnel,
     recentActivities: recentActivities.map(mapActivity),
@@ -223,32 +252,7 @@ export async function getDealsBoard(user: ScopedUser): Promise<FunnelColumn[]> {
     },
   });
 
-  return stages.map((stage) => {
-    const deals: DealCard[] = stage.deals.map((d) => ({
-      id: d.id,
-      title: d.title,
-      value: Number(d.value),
-      stageId: d.stageId,
-      expectedCloseDate: d.expectedCloseDate,
-      contactName: d.contact.name,
-      accountName: d.contact.account.name,
-      ownerName: d.owner.name,
-      ownerId: d.owner.id,
-      contactId: d.contactId,
-    }));
-    const totalValue = deals.reduce((sum, d) => sum + d.value, 0);
-    return {
-      id: stage.id,
-      name: stage.name,
-      order: stage.order,
-      probability: stage.probability,
-      isWon: stage.isWon,
-      isLost: stage.isLost,
-      deals,
-      totalValue,
-      weightedValue: Math.round((totalValue * stage.probability) / 100),
-    };
-  });
+  return mapStagesToFunnel(stages);
 }
 
 /* ── Contacts ────────────────────────────────────────────────────────────── */
@@ -375,7 +379,17 @@ export async function getContactDetail(user: ScopedUser, id: string): Promise<Co
 
 /* ── Leads ───────────────────────────────────────────────────────────────── */
 
-export async function getLeads(user: ScopedUser, query: { search?: string; status?: string } = {}): Promise<LeadRow[]> {
+export interface LeadQuery {
+  search?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function getLeadsPage(user: ScopedUser, query: LeadQuery = {}): Promise<Paged<LeadRow>> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(50, Math.max(5, query.pageSize ?? 15));
+
   const AND: Prisma.LeadWhereInput[] = [ownerFilter(user)];
   if (query.search?.trim()) {
     const term = query.search.trim();
@@ -392,31 +406,46 @@ export async function getLeads(user: ScopedUser, query: { search?: string; statu
   }
   const where: Prisma.LeadWhereInput = { AND };
 
-  const leads = await db.lead.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    include: { owner: { select: { name: true } } },
-  });
+  const [leads, total] = await Promise.all([
+    db.lead.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { owner: { select: { name: true } } },
+    }),
+    db.lead.count({ where }),
+  ]);
 
-  return leads.map((l) => ({
-    id: l.id,
-    name: l.name,
-    email: l.email,
-    phone: l.phone,
-    company: l.company,
-    source: l.source,
-    status: l.status,
-    ownerId: l.ownerId,
-    ownerName: l.owner.name,
-    createdAt: l.createdAt,
-  }));
+  return {
+    rows: leads.map((l) => ({
+      id: l.id,
+      name: l.name,
+      email: l.email,
+      phone: l.phone,
+      company: l.company,
+      source: l.source,
+      status: l.status,
+      ownerId: l.ownerId,
+      ownerName: l.owner.name,
+      createdAt: l.createdAt,
+    })),
+    total,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+  };
 }
 
 /* ── Tasks ───────────────────────────────────────────────────────────────── */
 
-export async function getMyTasks(user: ScopedUser): Promise<TaskRow[]> {
+/**
+ * scope "mine": only tasks assigned to the current user (any role).
+ * scope "all": every task in the workspace — ADMIN only (SALES falls back to "mine").
+ */
+export async function getTasksForUser(user: ScopedUser, scope: "mine" | "all" = "mine"): Promise<TaskRow[]> {
   const tasks = await db.task.findMany({
-    where: user.role === "ADMIN" ? {} : { assigneeId: user.id },
+    where: scope === "all" && user.role === "ADMIN" ? {} : { assigneeId: user.id },
     orderBy: [{ status: "asc" }, { dueDate: "asc" }],
     include: {
       contact: { select: { name: true } },

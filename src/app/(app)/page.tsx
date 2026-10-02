@@ -72,7 +72,7 @@ export default async function DashboardPage() {
           icon={CheckCircle2}
           accent="positive"
         />
-        <KpiCard title="Conversion Rate" value={`${kpis.conversionRate}%`} hint="Won / all deals" icon={Percent} />
+        <KpiCard title="Win Rate" value={`${kpis.winRate}%`} hint="Won / (won + lost)" icon={Percent} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

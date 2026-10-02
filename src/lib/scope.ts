@@ -21,9 +21,3 @@ export function ownerFilter<W extends object>(user: ScopedUser, field = "ownerId
   if (user.role === "ADMIN") return {} as W;
   return { [field]: user.id } as W;
 }
-
-/** Can this user mutate the given record? */
-export function canModify(user: ScopedUser, ownerId: string | null | undefined): boolean {
-  if (user.role === "ADMIN") return true;
-  return ownerId === user.id;
-}

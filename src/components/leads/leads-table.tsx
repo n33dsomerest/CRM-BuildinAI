@@ -11,7 +11,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { LeadRow } from "@/lib/queries";
+import type { LeadRow, Paged } from "@/lib/queries";
 import { deleteLead, updateLeadStatus } from "@/lib/actions/leads";
 import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { ConvertLeadDialog } from "@/components/leads/convert-lead-dialog";
@@ -44,13 +44,14 @@ import {
 } from "@/components/ui/table";
 
 interface LeadsTableProps {
-  leads: LeadRow[];
+  data: Paged<LeadRow>;
   search: string;
   status: string;
   currentUserId: string;
 }
 
-export function LeadsTable({ leads, search, status, currentUserId }: LeadsTableProps) {
+export function LeadsTable({ data, search, status, currentUserId }: LeadsTableProps) {
+  const leads = data.rows;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = React.useState(search);
@@ -67,6 +68,7 @@ export function LeadsTable({ leads, search, status, currentUserId }: LeadsTableP
       if (value) params.set(key, value);
       else params.delete(key);
     }
+    if (!("page" in updates)) params.delete("page");
     router.push(`/leads?${params.toString()}`);
   };
 
@@ -217,6 +219,36 @@ export function LeadsTable({ leads, search, status, currentUserId }: LeadsTableP
           </Table>
         </div>
       )}
+
+      {data.rows.length > 0 ? (
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            Showing {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total)} of{" "}
+            {data.total}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={data.page <= 1}
+              onClick={() => pushParams({ page: String(data.page - 1) })}
+            >
+              Previous
+            </Button>
+            <span>
+              Page {data.page} / {data.pageCount}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={data.page >= data.pageCount}
+              onClick={() => pushParams({ page: String(data.page + 1) })}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <LeadFormDialog
         open={formOpen}

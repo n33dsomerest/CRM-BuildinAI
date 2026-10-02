@@ -1,5 +1,5 @@
 import { requireAuth } from "@/lib/session";
-import { getLeads } from "@/lib/queries";
+import { getLeadsPage } from "@/lib/queries";
 import { PageHeader } from "@/components/page-header";
 import { LeadsTable } from "@/components/leads/leads-table";
 
@@ -15,8 +15,9 @@ export default async function LeadsPage({
   const params = await searchParams;
   const search = typeof params.search === "string" ? params.search : undefined;
   const status = typeof params.status === "string" ? params.status : undefined;
+  const page = typeof params.page === "string" ? Number(params.page) : 1;
 
-  const leads = await getLeads({ id: session.user.id, role: session.user.role }, { search, status });
+  const data = await getLeadsPage({ id: session.user.id, role: session.user.role }, { search, status, page });
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -25,7 +26,7 @@ export default async function LeadsPage({
         description="Raw prospects before qualification — convert a qualified lead into an account, contact and deal in one click."
       />
       <LeadsTable
-        leads={leads}
+        data={data}
         search={search ?? ""}
         status={status ?? ""}
         currentUserId={session.user.id}

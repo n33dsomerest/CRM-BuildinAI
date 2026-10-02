@@ -48,6 +48,7 @@ export async function saveLead(input: unknown, id?: string): Promise<ActionResul
       entity: "Lead",
       entityId: created.id,
       action: "CREATE",
+      userId: session.user.id,
       changes: { name: created.name },
     });
     revalidateLeadViews();
@@ -99,6 +100,7 @@ export async function deleteLead(id: string): Promise<ActionResult<null>> {
       entity: "Lead",
       entityId: id,
       action: "DELETE",
+      userId: session.user.id,
       changes: { id: existing.id, name: existing.name },
     });
     revalidateLeadViews();

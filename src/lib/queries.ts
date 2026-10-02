@@ -8,6 +8,7 @@ export interface DealCard {
   id: string;
   title: string;
   value: number;
+  stageId: string;
   expectedCloseDate: Date | null;
   contactName: string;
   accountName: string;
@@ -78,6 +79,8 @@ export interface TaskRow {
   title: string;
   dueDate: Date;
   status: TaskStatus;
+  /** OPEN and past due — computed server-side to keep render pure. */
+  overdue: boolean;
   contactId: string | null;
   contactName: string | null;
   dealId: string | null;
@@ -119,6 +122,7 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
           id: true,
           title: true,
           value: true,
+          stageId: true,
           expectedCloseDate: true,
           contactId: true,
           contact: { select: { name: true, account: { select: { name: true } } } },
@@ -133,6 +137,7 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
       id: d.id,
       title: d.title,
       value: Number(d.value),
+      stageId: d.stageId,
       expectedCloseDate: d.expectedCloseDate,
       contactName: d.contact.name,
       accountName: d.contact.account.name,
@@ -208,6 +213,7 @@ export async function getDealsBoard(user: ScopedUser): Promise<FunnelColumn[]> {
           id: true,
           title: true,
           value: true,
+          stageId: true,
           expectedCloseDate: true,
           contactId: true,
           contact: { select: { name: true, account: { select: { name: true } } } },
@@ -222,6 +228,7 @@ export async function getDealsBoard(user: ScopedUser): Promise<FunnelColumn[]> {
       id: d.id,
       title: d.title,
       value: Number(d.value),
+      stageId: d.stageId,
       expectedCloseDate: d.expectedCloseDate,
       contactName: d.contact.name,
       accountName: d.contact.account.name,
@@ -444,6 +451,15 @@ export async function getAccountsList(user: ScopedUser) {
   });
 }
 
+/** Lightweight contact options for deal forms: (account → contact) pickers. */
+export async function getContactsForSelect(user: ScopedUser) {
+  return db.contact.findMany({
+    where: ownerFilter(user),
+    select: { id: true, name: true, accountId: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 
 export async function getAuditLogs(page = 1, pageSize = 20) {
@@ -520,6 +536,7 @@ function mapTask(t: TaskWithRelations): TaskRow {
     title: t.title,
     dueDate: t.dueDate,
     status: t.status,
+    overdue: t.status === "OPEN" && t.dueDate.getTime() < Date.now(),
     contactId: t.contactId,
     contactName: t.contact?.name ?? null,
     dealId: t.dealId,

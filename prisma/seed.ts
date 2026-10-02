@@ -2,7 +2,7 @@
  * Seed script — populates the CRM with realistic demo data.
  * Run with: npm run db:seed
  */
-import { PrismaClient, Prisma, Role, ContactStatus, LeadStatus, LeadSource, ActivityType, TaskStatus } from "@prisma/client";
+import { PrismaClient, Role, ContactStatus, LeadStatus, LeadSource, ActivityType, TaskStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();

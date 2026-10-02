@@ -77,4 +77,4 @@ jobs:
         run: npx prisma migrate deploy
 
       - name: Integration tests
-        run: npx vitest run --config vitest.integration.config.ts
+        run: npx vitest run --config vitest.config.integration.mts

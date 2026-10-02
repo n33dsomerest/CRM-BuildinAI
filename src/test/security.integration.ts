@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { prisma } from "@/test/setup";
 import { hashSync } from "bcryptjs";
 import { ownerFilter } from "@/lib/scope";

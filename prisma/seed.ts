@@ -180,7 +180,7 @@ async function main() {
 
   // Accounts + contacts (owners rotate between sales reps)
   const accountIds: string[] = [];
-  const contactIds: string[] = [];
+  const contactsByAccount: string[][] = [];
   const contactOwners: string[] = [];
   for (let a = 0; a < ACCOUNTS.length; a++) {
     const acc = ACCOUNTS[a];
@@ -196,6 +196,7 @@ async function main() {
       select: { id: true },
     });
     accountIds.push(account.id);
+    contactsByAccount[a] = [];
 
     for (let c = 0; c < acc.contacts.length; c++) {
       const person = acc.contacts[c];
@@ -204,7 +205,7 @@ async function main() {
         data: {
           name: person.name,
           email: `${person.name.toLowerCase().replace(/[^a-z]+/g, ".")}@${domain}`,
-          phone: `+1 555-${String(1100 + contactIds.length).padStart(4, "0")}`,
+          phone: `+1 555-${String(1100 + contactOwners.length).padStart(4, "0")}`,
           position: person.position,
           status: c === 0 && a % 3 !== 2 ? ContactStatus.CUSTOMER : ContactStatus.PROSPECT,
           accountId: account.id,
@@ -212,7 +213,7 @@ async function main() {
         },
         select: { id: true },
       });
-      contactIds.push(contact.id);
+      contactsByAccount[a].push(contact.id);
       contactOwners.push(owner.id);
     }
   }
@@ -224,6 +225,8 @@ async function main() {
     await prisma.lead.create({ data: { ...l, ownerId: owner } });
   }
 
+  const allContactIds = contactsByAccount.flat();
+
   // Deals
   const dealIds: string[] = [];
   for (const d of DEALS) {
@@ -233,7 +236,7 @@ async function main() {
         value: d.value,
         stageId: stageIds[d.stage],
         accountId: accountIds[d.accountIndex],
-        contactId: contactIds[d.accountIndex * 3 + d.contactIndex],
+        contactId: contactsByAccount[d.accountIndex][d.contactIndex],
         ownerId: [admin, sarah, david][d.owner].id,
         expectedCloseDate: d.closeInDays === null ? null : daysFromNow(d.closeInDays),
       },
@@ -258,7 +261,7 @@ async function main() {
         type: template.type,
         subject: template.subject,
         body: template.body,
-        contactId: contactIds[i],
+        contactId: allContactIds[i],
         dealId: i < dealIds.length ? dealIds[i] : null,
         userId: contactOwners[i],
         occurredAt: daysFromNow(-(i * 3 + 2)),
@@ -266,17 +269,18 @@ async function main() {
     });
   }
 
-  // Tasks — mix of overdue, due-soon and done
+  // Tasks — mix of overdue, due-soon and done (contactIndex refers to the
+  // flattened contactsByAccount order)
   const taskSeeds: { title: string; dueInDays: number; status: TaskStatus; assignee: string; contactIndex?: number; dealIndex?: number }[] = [
     { title: "Send proposal to Acme Corp", dueInDays: -2, status: TaskStatus.OPEN, assignee: sarah.id, contactIndex: 3, dealIndex: 1 },
-    { title: "Follow up on Globex security review", dueInDays: -1, status: TaskStatus.OPEN, assignee: david.id, contactIndex: 8 },
+    { title: "Follow up on Globex security review", dueInDays: -1, status: TaskStatus.OPEN, assignee: david.id, contactIndex: 6 },
     { title: "Prepare ROI deck for Northwind", dueInDays: 0, status: TaskStatus.OPEN, assignee: sarah.id, contactIndex: 0, dealIndex: 4 },
-    { title: "Book demo with Stark Industries", dueInDays: 1, status: TaskStatus.OPEN, assignee: admin.id, contactIndex: 15 },
+    { title: "Book demo with Stark Industries", dueInDays: 1, status: TaskStatus.OPEN, assignee: admin.id, contactIndex: 13 },
     { title: "Renewal paperwork for Hooli", dueInDays: 3, status: TaskStatus.OPEN, assignee: david.id, dealIndex: 8 },
     { title: "Call Initech about lost deal feedback", dueInDays: 5, status: TaskStatus.OPEN, assignee: david.id, contactIndex: 10 },
     { title: "Update forecast for Q4", dueInDays: 7, status: TaskStatus.OPEN, assignee: admin.id },
     { title: "Send onboarding checklist to Initech", dueInDays: -13, status: TaskStatus.DONE, assignee: sarah.id, dealIndex: 12 },
-    { title: "Intro email to Wayne Logistics", dueInDays: -20, status: TaskStatus.DONE, assignee: sarah.id, contactIndex: 18 },
+    { title: "Intro email to Wayne Logistics", dueInDays: -20, status: TaskStatus.DONE, assignee: sarah.id, contactIndex: 17 },
     { title: "Contract signature collected", dueInDays: -4, status: TaskStatus.DONE, assignee: admin.id, dealIndex: 16 },
   ];
 
@@ -286,7 +290,7 @@ async function main() {
         title: t.title,
         dueDate: daysFromNow(t.dueInDays),
         status: t.status,
-        contactId: t.contactIndex !== undefined ? contactIds[t.contactIndex] : null,
+        contactId: t.contactIndex !== undefined ? allContactIds[t.contactIndex] : null,
         dealId: t.dealIndex !== undefined ? dealIds[t.dealIndex] : null,
         assigneeId: t.assignee,
       },

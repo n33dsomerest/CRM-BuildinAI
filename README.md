@@ -59,7 +59,7 @@ npm run dev        # http://localhost:3000
 prisma/
   schema.prisma        # Users, Accounts, Contacts, Leads, Stages, Deals,
                        # Activities, Tasks, AuditLog (indexes + FKs)
-  seed.ts              # Demo data (users, stages, 8 accounts, 30 deals…)
+  seed.ts              # Demo data (3 users, 6 stages, 8 accounts, 20 contacts, 10 leads, 30 deals)
 src/
   app/
     (app)/             # Authenticated shell

@@ -2,15 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/session";
 import { db } from "@/lib/db";
 import { recordAudit } from "@/lib/audit";
 import { createUserSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 export async function createUser(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const session = await auth();
-  if (session?.user.role !== "ADMIN") return fail("Only administrators can create users");
+  // Admin-only. requireAdmin redirects non-admins (the previous raw auth()
+  // check trusted the JWT role without the DB-backed redirect guard).
+  const session = await requireAdmin();
 
   const parsed = createUserSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid data");
@@ -23,7 +25,7 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
       data: {
         name: parsed.data.name,
         email: parsed.data.email.toLowerCase(),
-        passwordHash: bcrypt.hashSync(parsed.data.password, 10),
+        passwordHash: bcrypt.hashSync(parsed.data.password, 12),
         role: parsed.data.role,
       },
     });
@@ -39,7 +41,7 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
     revalidatePath("/admin/users");
     return ok({ id: created.id });
   } catch (error) {
-    console.error("createUser failed", error);
+    logError("createUser", error);
     return fail("Something went wrong. Please try again.");
   }
 }

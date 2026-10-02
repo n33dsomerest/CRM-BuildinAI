@@ -6,8 +6,10 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
 import { ownerFilter } from "@/lib/scope";
 import { recordAudit, diffChanges } from "@/lib/audit";
+import { assertUserExists, isOwnedRecord } from "@/lib/authorize";
 import { contactSchema, contactImportRowSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 function revalidateContactViews(id?: string) {
   revalidatePath("/");
@@ -22,6 +24,12 @@ export async function saveContact(input: unknown, id?: string): Promise<ActionRe
   const parsed = contactSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid data");
   const data = parsed.data;
+
+  // Client-supplied foreign keys must all be verified (IDOR + FK safety).
+  if (!(await isOwnedRecord("account", data.accountId, session.user))) return fail("Account not found");
+  if (session.user.role === "ADMIN" && !(await assertUserExists(data.ownerId))) {
+    return fail("Selected owner does not exist");
+  }
 
   try {
     if (id) {
@@ -60,7 +68,7 @@ export async function saveContact(input: unknown, id?: string): Promise<ActionRe
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: created,
+      changes: { name: created.name },
     });
     revalidateContactViews(created.id);
     return ok({ id: created.id });
@@ -68,7 +76,7 @@ export async function saveContact(input: unknown, id?: string): Promise<ActionRe
     if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
       return fail("A contact with this email already exists in the account");
     }
-    console.error("saveContact failed", error);
+    logError("saveContact", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -88,12 +96,12 @@ export async function deleteContact(id: string): Promise<ActionResult<null>> {
       entityId: id,
       action: "DELETE",
       userId: session.user.id,
-      changes: existing,
+      changes: { id: existing.id, name: existing.name },
     });
     revalidateContactViews();
     return ok(null);
   } catch (error) {
-    console.error("deleteContact failed", error);
+    logError("deleteContact", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -175,19 +183,20 @@ export async function importContactsCsv(csv: string): Promise<ActionResult<Impor
           ownerId: session.user.id,
         },
       });
-      await recordAudit({
-        entity: "Contact",
-        entityId: contact.id,
-        action: "CREATE",
-        userId: session.user.id,
-        changes: { source: "csv-import" },
-      });
       created += 1;
     } catch (error) {
-      console.error("import row failed", error);
+      logError("importContactsCsv row", error);
       errors.push(`Row ${index + 2}: could not be imported`);
     }
   }
+
+  await recordAudit({
+    entity: "Contact",
+    entityId: "csv-import",
+    action: "CREATE",
+    userId: session.user.id,
+    changes: { source: "csv-import", created, skipped },
+  });
 
   revalidateContactViews();
   return ok({ created, skipped, errors });

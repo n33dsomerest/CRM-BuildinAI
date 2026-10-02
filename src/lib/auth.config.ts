@@ -8,6 +8,9 @@ export const authConfig = {
   pages: {
     signIn: "/login",
   },
+  // Required in production (NODE_ENV=production) — without it every login
+  // POST fails with UntrustedHost outside of `next dev`.
+  trustHost: true,
   session: {
     strategy: "jwt",
   },

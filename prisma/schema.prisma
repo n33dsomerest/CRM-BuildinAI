@@ -55,13 +55,16 @@ enum AuditAction {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  role         Role     @default(SALES)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String
+  name            String
+  role            Role     @default(SALES)
+  // Bumped whenever role or password changes → JWTs issued before the bump
+  // are considered stale and the user must sign in again.
+  passwordVersion Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   accounts   Account[]  @relation("AccountOwner")
   contacts   Contact[]  @relation("ContactOwner")
@@ -72,6 +75,17 @@ model User {
   auditLogs  AuditLog[]
 
   @@index([role])
+}
+
+model LoginAttempt {
+  id          String   @id @default(cuid())
+  email       String
+  ip          String
+  attempts    Int      @default(0)
+  windowStart DateTime @default(now())
+
+  @@unique([email, ip])
+  @@index([windowStart])
 }
 
 model Account {

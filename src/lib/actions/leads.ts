@@ -7,6 +7,7 @@ import { ownerFilter } from "@/lib/scope";
 import { recordAudit, diffChanges } from "@/lib/audit";
 import { convertLeadSchema, leadSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 function revalidateLeadViews() {
   revalidatePath("/");
@@ -53,7 +54,7 @@ export async function saveLead(input: unknown, id?: string): Promise<ActionResul
     revalidateLeadViews();
     return ok({ id: created.id });
   } catch (error) {
-    console.error("saveLead failed", error);
+    logError("saveLead", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -80,7 +81,7 @@ export async function updateLeadStatus(id: string, status: string): Promise<Acti
     revalidateLeadViews();
     return ok(null);
   } catch (error) {
-    console.error("updateLeadStatus failed", error);
+    logError("updateLeadStatus", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -105,7 +106,7 @@ export async function deleteLead(id: string): Promise<ActionResult<null>> {
     revalidateLeadViews();
     return ok(null);
   } catch (error) {
-    console.error("deleteLead failed", error);
+    logError("deleteLead", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -181,7 +182,7 @@ export async function convertLead(input: unknown): Promise<ActionResult<{ contac
     revalidateLeadViews();
     return ok({ contactId: result.contactId, dealId: result.dealId });
   } catch (error) {
-    console.error("convertLead failed", error);
+    logError("convertLead", error);
     return fail("Something went wrong. Please try again.");
   }
 }

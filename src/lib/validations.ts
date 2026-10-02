@@ -104,10 +104,18 @@ export const taskSchema = z.object({
 
 /* ── Users (admin) ───────────────────────────────────────────────────────── */
 
+export const passwordSchema = z
+  .string()
+  .min(8, "Password must be at least 8 characters")
+  .max(72)
+  .regex(/[A-Z]/, "Password must contain an uppercase letter")
+  .regex(/\d/, "Password must contain a digit")
+  .refine((v) => !/(.)\1{2,}/.test(v), "Password must not repeat a character 3+ times in a row");
+
 export const createUserSchema = z.object({
   name: z.string().min(2, "Name is required").max(80),
   email: z.email("Enter a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters").max(72),
+  password: passwordSchema,
   role: z.enum(["ADMIN", "SALES"]),
 });
 

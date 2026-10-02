@@ -6,6 +6,7 @@ import { requireAuth } from "@/lib/session";
 import { recordAudit } from "@/lib/audit";
 import { accountSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 export async function saveAccount(input: unknown): Promise<ActionResult<{ id: string; name: string }>> {
   const session = await requireAuth();
@@ -28,7 +29,7 @@ export async function saveAccount(input: unknown): Promise<ActionResult<{ id: st
     revalidatePath("/deals");
     return ok(created);
   } catch (error) {
-    console.error("saveAccount failed", error);
+    logError("saveAccount", error);
     return fail("Something went wrong. Please try again.");
   }
 }

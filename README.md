@@ -37,7 +37,7 @@ npm run db:seed
 npm run dev        # http://localhost:3000
 ```
 
-**Demo accounts** (from seed): `admin@crm.dev / admin123` · `sarah@crm.dev / sales123` · `david@crm.dev / sales123`
+**Demo accounts** (from seed): `admin@crm.dev / Admin!2345` · `sarah@crm.dev / Sales!2345` · `david@crm.dev / Sales!2345`
 
 ## Scripts
 
@@ -125,7 +125,7 @@ DATABASE_URL="<direct-url>" DIRECT_URL="<direct-url>" npm run db:seed
 
 ### 5. Verify
 
-- Open the Vercel URL → sign in with `admin@crm.dev / admin123`.
+- Open the Vercel URL → sign in with `admin@crm.dev / Admin!2345`.
 - Check the Dashboard KPIs, drag a deal on the Kanban, convert a lead.
 - Sign in as `sarah@crm.dev` to confirm she only sees her own records.
 

@@ -24,9 +24,9 @@ const STAGES = [
 ];
 
 const USERS = [
-  { email: "admin@crm.dev", name: "Alex Morgan", role: Role.ADMIN, password: "admin123" },
-  { email: "sarah@crm.dev", name: "Sarah Chen", role: Role.SALES, password: "sales123" },
-  { email: "david@crm.dev", name: "David Lee", role: Role.SALES, password: "sales123" },
+  { email: "admin@crm.dev", name: "Alex Morgan", role: Role.ADMIN, password: "Admin!2345" },
+  { email: "sarah@crm.dev", name: "Sarah Chen", role: Role.SALES, password: "Sales!2345" },
+  { email: "david@crm.dev", name: "David Lee", role: Role.SALES, password: "Sales!2345" },
 ];
 
 const ACCOUNTS: { name: string; industry: string; website: string; phone: string; contacts: { name: string; position: string }[] }[] = [
@@ -163,7 +163,7 @@ async function main() {
           email: u.email,
           name: u.name,
           role: u.role,
-          passwordHash: bcrypt.hashSync(u.password, 10),
+          passwordHash: bcrypt.hashSync(u.password, 12),
         },
         select: { id: true },
       })

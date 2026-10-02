@@ -5,8 +5,10 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
 import { ownerFilter } from "@/lib/scope";
 import { recordAudit } from "@/lib/audit";
+import { isOwnedRecord } from "@/lib/authorize";
 import { activitySchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 export async function addActivity(input: unknown): Promise<ActionResult<{ id: string }>> {
   const session = await requireAuth();
@@ -19,6 +21,11 @@ export async function addActivity(input: unknown): Promise<ActionResult<{ id: st
       where: { id: data.contactId, ...ownerFilter(session.user) },
     });
     if (!contact) return fail("Contact not found");
+
+    // The related deal is client-supplied — verify it belongs to the user.
+    if (data.dealId && !(await isOwnedRecord("deal", data.dealId, session.user))) {
+      return fail("Deal not found");
+    }
 
     const created = await db.activity.create({
       data: {
@@ -36,14 +43,14 @@ export async function addActivity(input: unknown): Promise<ActionResult<{ id: st
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: { type: data.type, subject: data.subject, contactId: contact.id },
+      changes: { type: data.type, subject: data.subject },
     });
 
     revalidatePath(`/contacts/${contact.id}`);
     revalidatePath("/");
     return ok({ id: created.id });
   } catch (error) {
-    console.error("addActivity failed", error);
+    logError("addActivity", error);
     return fail("Something went wrong. Please try again.");
   }
 }

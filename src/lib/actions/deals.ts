@@ -5,8 +5,10 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
 import { ownerFilter } from "@/lib/scope";
 import { recordAudit, diffChanges } from "@/lib/audit";
+import { assertUserExists, isOwnedRecord } from "@/lib/authorize";
 import { dealSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 function revalidateDealViews(id?: string) {
   revalidatePath("/");
@@ -21,6 +23,20 @@ export async function saveDeal(input: unknown, id?: string): Promise<ActionResul
   const parsed = dealSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid data");
   const data = parsed.data;
+
+  // Client-supplied foreign keys must all be verified (IDOR + FK safety).
+  if (!(await isOwnedRecord("account", data.accountId, session.user))) return fail("Account not found");
+  if (!(await isOwnedRecord("contact", data.contactId, session.user))) return fail("Contact not found");
+  const contact = await db.contact.findUnique({
+    where: { id: data.contactId },
+    select: { accountId: true },
+  });
+  if (contact && contact.accountId !== data.accountId) {
+    return fail("Contact does not belong to that account");
+  }
+  if (session.user.role === "ADMIN" && !(await assertUserExists(data.ownerId))) {
+    return fail("Selected owner does not exist");
+  }
 
   try {
     if (id) {
@@ -71,12 +87,12 @@ export async function saveDeal(input: unknown, id?: string): Promise<ActionResul
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: created,
+      changes: { title: created.title, value: String(created.value) },
     });
     revalidateDealViews(created.id);
     return ok({ id: created.id });
   } catch (error) {
-    console.error("saveDeal failed", error);
+    logError("saveDeal", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -106,7 +122,7 @@ export async function moveDealStage(dealId: string, stageId: string): Promise<Ac
     revalidateDealViews();
     return ok({ stageName: stage.name });
   } catch (error) {
-    console.error("moveDealStage failed", error);
+    logError("moveDealStage", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -126,12 +142,12 @@ export async function deleteDeal(id: string): Promise<ActionResult<null>> {
       entityId: id,
       action: "DELETE",
       userId: session.user.id,
-      changes: existing,
+      changes: { id: existing.id, title: existing.title },
     });
     revalidateDealViews();
     return ok(null);
   } catch (error) {
-    console.error("deleteDeal failed", error);
+    logError("deleteDeal", error);
     return fail("Something went wrong. Please try again.");
   }
 }

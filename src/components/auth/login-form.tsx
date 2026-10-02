@@ -65,8 +65,8 @@ export function LoginForm() {
           </Button>
           <div className="rounded-md bg-muted/60 px-3 py-2 text-center text-xs text-muted-foreground">
             <p className="font-medium text-foreground">Demo accounts (after seeding)</p>
-            <p>admin@crm.dev / admin123 — Administrator</p>
-            <p>sarah@crm.dev / sales123 — Sales</p>
+            <p>admin@crm.dev / Admin!2345 — Administrator</p>
+            <p>sarah@crm.dev / Sales!2345 — Sales</p>
           </div>
         </CardFooter>
       </form>

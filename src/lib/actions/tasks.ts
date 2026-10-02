@@ -5,8 +5,10 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
 import { ownerFilter } from "@/lib/scope";
 import { recordAudit, diffChanges } from "@/lib/audit";
+import { assertUserExists, isOwnedRecord } from "@/lib/authorize";
 import { taskSchema } from "@/lib/validations";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logError } from "@/lib/log";
 
 function revalidateTaskViews() {
   revalidatePath("/");
@@ -26,6 +28,11 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
         where: { id: data.contactId, ...ownerFilter(session.user) },
       });
       if (!contact) return fail("Contact not found");
+    }
+    // The related deal is client-supplied — verify it belongs to the user
+    // (deal ownership, not task assignment).
+    if (data.dealId && !(await isOwnedRecord("deal", data.dealId, session.user, "ownerId"))) {
+      return fail("Deal not found");
     }
 
     const created = await db.task.create({
@@ -48,7 +55,7 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
     revalidateTaskViews();
     return ok({ id: created.id });
   } catch (error) {
-    console.error("createTask failed", error);
+    logError("createTask", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -74,7 +81,7 @@ export async function toggleTask(id: string): Promise<ActionResult<{ status: str
     revalidateTaskViews();
     return ok({ status });
   } catch (error) {
-    console.error("toggleTask failed", error);
+    logError("toggleTask", error);
     return fail("Something went wrong. Please try again.");
   }
 }
@@ -94,12 +101,12 @@ export async function deleteTask(id: string): Promise<ActionResult<null>> {
       entityId: id,
       action: "DELETE",
       userId: session.user.id,
-      changes: existing,
+      changes: { id: existing.id, title: existing.title },
     });
     revalidateTaskViews();
     return ok(null);
   } catch (error) {
-    console.error("deleteTask failed", error);
+    logError("deleteTask", error);
     return fail("Something went wrong. Please try again.");
   }
 }

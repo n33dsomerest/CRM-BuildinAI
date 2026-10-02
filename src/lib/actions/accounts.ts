@@ -23,7 +23,7 @@ export async function saveAccount(input: unknown): Promise<ActionResult<{ id: st
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: created,
+      changes: { name: created.name },
     });
     revalidatePath("/contacts");
     revalidatePath("/deals");

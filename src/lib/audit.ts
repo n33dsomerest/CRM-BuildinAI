@@ -9,7 +9,23 @@ export interface AuditParams {
   changes: unknown;
 }
 
-/** Persist an audit trail entry for any mutation. */
+/** Fields that must never end up in the audit trail. */
+const SENSITIVE_FIELDS = ["email", "phone", "passwordHash"] as const;
+
+/**
+ * Strips sensitive fields from an audit payload — works for both plain record
+ * snapshots and `{ field: { from, to } }` diffs (top-level keys are the same).
+ */
+export function redact<T extends Record<string, unknown>>(
+  record: T,
+  fields: readonly string[] = SENSITIVE_FIELDS
+): Partial<T> {
+  const copy = { ...record };
+  for (const field of fields) delete copy[field];
+  return copy;
+}
+
+/** Persist an audit trail entry. Every payload passes through `redact`. */
 export async function recordAudit(params: AuditParams): Promise<void> {
   await db.auditLog.create({
     data: {
@@ -17,7 +33,7 @@ export async function recordAudit(params: AuditParams): Promise<void> {
       entityId: params.entityId,
       action: params.action,
       userId: params.userId,
-      changes: params.changes as Prisma.InputJsonValue,
+      changes: redact(params.changes as Record<string, unknown>) as Prisma.InputJsonValue,
     },
   });
 }
@@ -25,7 +41,7 @@ export async function recordAudit(params: AuditParams): Promise<void> {
 /**
  * Shallow field diff for UPDATE audit entries: { field: { from, to } }.
  * Values are stringified so the JSON payload is always serializable
- * (Decimal, Date, enums…).
+ * (Decimal, Date, enums…). Sensitive keys are dropped by `recordAudit`.
  */
 export function diffChanges(
   before: Record<string, unknown>,

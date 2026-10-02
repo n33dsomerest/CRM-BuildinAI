@@ -462,16 +462,44 @@ export async function getContactsForSelect(user: ScopedUser) {
 
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 
-export async function getAuditLogs(page = 1, pageSize = 20) {
+export interface AuditLogQuery {
+  entity?: string;
+  action?: string;
+  userId?: string;
+  /** Inclusive lower bound, YYYY-MM-DD */
+  from?: string;
+  /** Inclusive upper bound, YYYY-MM-DD */
+  to?: string;
+}
+
+export async function getAuditLogs(page = 1, pageSize = 20, query: AuditLogQuery = {}) {
   const safePage = Math.max(1, page);
+
+  const where: Prisma.AuditLogWhereInput = {};
+  if (query.entity) where.entity = query.entity;
+  if (query.action && ["CREATE", "UPDATE", "DELETE"].includes(query.action)) {
+    where.action = query.action as "CREATE" | "UPDATE" | "DELETE";
+  }
+  if (query.userId) where.userId = query.userId;
+  if (query.from || query.to) {
+    where.createdAt = {};
+    if (query.from && /^\d{4}-\d{2}-\d{2}$/.test(query.from)) {
+      where.createdAt.gte = new Date(`${query.from}T00:00:00`);
+    }
+    if (query.to && /^\d{4}-\d{2}-\d{2}$/.test(query.to)) {
+      where.createdAt.lte = new Date(`${query.to}T23:59:59.999`);
+    }
+  }
+
   const [rows, total] = await Promise.all([
     db.auditLog.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       skip: (safePage - 1) * pageSize,
       take: pageSize,
       include: { user: { select: { name: true, role: true } } },
     }),
-    db.auditLog.count(),
+    db.auditLog.count({ where }),
   ]);
   return {
     rows: rows.map((r) => ({

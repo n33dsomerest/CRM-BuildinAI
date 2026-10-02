@@ -87,7 +87,7 @@ export async function saveDeal(input: unknown, id?: string): Promise<ActionResul
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: { title: created.title, value: String(created.value) },
+      changes: { title: created.title },
     });
     revalidateDealViews(created.id);
     return ok({ id: created.id });

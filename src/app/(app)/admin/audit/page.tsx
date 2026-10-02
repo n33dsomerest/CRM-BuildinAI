@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
-import { getAuditLogs } from "@/lib/queries";
+import { getAuditLogs, getUsersList } from "@/lib/queries";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { AuditFilters } from "@/components/admin/audit-filters";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,15 +52,27 @@ export default async function AuditLogPage({
 }) {
   await requireAdmin();
   const params = await searchParams;
+  const str = (key: string) => (typeof params[key] === "string" ? params[key] : undefined);
   const page = typeof params.page === "string" ? Number(params.page) : 1;
-  const { rows, page: current, pageCount, total } = await getAuditLogs(page);
+
+  const [{ rows, page: current, pageCount, total }, users] = await Promise.all([
+    getAuditLogs(page, 20, {
+      entity: str("entity"),
+      action: str("action"),
+      userId: str("userId"),
+      from: str("from"),
+      to: str("to"),
+    }),
+    getUsersList(),
+  ]);
 
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Audit log"
-        description={`Every create, update and delete across the workspace — ${total} entries.`}
+        description={`Every create, update and delete across the workspace — ${total} matching entries. Personal data is redacted; entries older than 90 days are pruned.`}
       />
+      <AuditFilters users={users.map((user) => ({ id: user.id, name: user.name }))} />
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
@@ -71,27 +84,35 @@ export default async function AuditLogPage({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.id}>
-                <TableCell className="text-xs text-muted-foreground">{formatDateTime(row.createdAt)}</TableCell>
-                <TableCell className="text-sm">{row.userName}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1.5">
-                    <Badge
-                      variant="secondary"
-                      className={cn(
-                        row.action === "CREATE" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-                        row.action === "DELETE" && "bg-red-500/15 text-red-700 dark:text-red-400"
-                      )}
-                    >
-                      {row.action}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{row.entity}</span>
-                  </div>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                  No entries match the current filters.
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">{describeChanges(row.changes)}</TableCell>
               </TableRow>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell className="text-xs text-muted-foreground">{formatDateTime(row.createdAt)}</TableCell>
+                  <TableCell className="text-sm">{row.userName}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          row.action === "CREATE" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+                          row.action === "DELETE" && "bg-red-500/15 text-red-700 dark:text-red-400"
+                        )}
+                      >
+                        {row.action}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">{row.entity}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{describeChanges(row.changes)}</TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>

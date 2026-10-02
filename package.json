@@ -8,13 +8,14 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:integration": "cross-env DATABASE_URL=\"postgresql://neondb_owner:npg_Xn1WS3smvhyT@ep-muddy-mountain-b3mbvsr0.c-4.ap-southeast-1.aws.neon.tech/crmglm_test?sslmode=require&channel_binding=require\" DIRECT_URL=\"postgresql://neondb_owner:npg_Xn1WS3smvhyT@ep-muddy-mountain-b3mbvsr0.c-4.ap-southeast-1.aws.neon.tech/crmglm_test?sslmode=require&channel_binding=require\" vitest run --config vitest.integration.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:prune-audit": "tsx prisma/retention.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "pretest:integration": "node -e \"const s = require('fs').readFileSync('package.json','utf8');if (/postgresql:\\/\\/[^'\\\"]*:[^'\\\"]*@/.test(s)) {  console.error('BLOCKED: credential literal in package.json - move test DB URLs to env/.env');  process.exit(1);}\""
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -48,7 +49,6 @@
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "prisma": "^6.19.3",

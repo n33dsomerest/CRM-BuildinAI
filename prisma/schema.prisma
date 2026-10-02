@@ -60,9 +60,6 @@ model User {
   passwordHash    String
   name            String
   role            Role     @default(SALES)
-  // Bumped whenever role or password changes → JWTs issued before the bump
-  // are considered stale and the user must sign in again.
-  passwordVersion Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

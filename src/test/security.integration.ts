@@ -7,8 +7,6 @@ describe("Security: row-level ownership (integration)", () => {
   let admin: { id: string; email: string };
   let sales1: { id: string; email: string };
   let sales2: { id: string; email: string };
-  let adminAccount: { id: string };
-  let sales1Account: { id: string };
   let sales2Account: { id: string };
 
   beforeEach(async () => {
@@ -23,11 +21,11 @@ describe("Security: row-level ownership (integration)", () => {
       data: { email: "sec-sales2@test.com", name: "Sales Two", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
     });
 
-    // Create accounts owned by each
-    adminAccount = await prisma.account.create({
+    // Create accounts owned by each (fixtures for the count assertions below)
+    await prisma.account.create({
       data: { name: "Admin Corp", ownerId: admin.id },
     });
-    sales1Account = await prisma.account.create({
+    await prisma.account.create({
       data: { name: "Sales1 Co", ownerId: sales1.id },
     });
     sales2Account = await prisma.account.create({

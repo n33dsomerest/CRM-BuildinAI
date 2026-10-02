@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -24,7 +25,13 @@ export const metadata: Metadata = {
     "Full-stack enterprise CRM: leads, contacts, accounts, deal pipeline, activities and audit trail.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // CSP nonce emitted per-request by src/proxy.ts. Passing it to ThemeProvider
+  // makes next-themes stamp its pre-paint theme script with the nonce —
+  // without it the strict production CSP (script-src 'nonce-…' 'strict-dynamic')
+  // blocks that script and dark-mode users get a white flash before paint.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html
       lang="en"
@@ -32,7 +39,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+          nonce={nonce}
+        >
           {children}
           <Toaster richColors position="top-right" />
         </ThemeProvider>

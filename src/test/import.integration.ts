@@ -1,128 +1,114 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { prisma } from "@/test/setup";
 import { hashSync } from "bcryptjs";
-import Papa from "papaparse";
 
-describe("CSV import logic: caps, validate-first, transaction, abort flag (integration)", () => {
-  let sales: { id: string; email: string };
-  let account: { id: string; name: string };
+vi.mock("@/lib/session", () => ({
+  requireAuth: vi.fn(),
+  requireAdmin: vi.fn(),
+  getSession: vi.fn(),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-  beforeEach(async () => {
-    await prisma.auditLog.deleteMany();
-    await prisma.contact.deleteMany();
-    await prisma.account.deleteMany();
-    await prisma.user.deleteMany();
+import { requireAuth } from "@/lib/session";
+// Import the REAL shipped logic - no reimplementation in the test.
+import { parseImportCsv, MAX_CSV_BYTES, MAX_ROWS, ERROR_ABORT_RATIO } from "@/lib/actions/contacts";
 
-    sales = await prisma.user.create({
-      data: { email: "sales@test.com", name: "Sales", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
-    });
-    account = await prisma.account.create({ data: { name: "Test Co", ownerId: sales.id } });
+const asUser = (u: { id: string; role: "ADMIN" | "SALES" }) =>
+  vi.mocked(requireAuth).mockResolvedValue({ user: u } as never);
+
+describe("CSV import: shipped caps + validate-first logic (integration)", () => {
+  it("exposes the shipped cap constants", () => {
+    expect(MAX_CSV_BYTES).toBe(2 * 1024 * 1024);
+    expect(MAX_ROWS).toBe(2_000);
+    expect(ERROR_ABORT_RATIO).toBe(0.1);
   });
 
-  // Duplicate the CSV processing logic for testing without Next.js dependencies
-  const MAX_CSV_BYTES = 2 * 1024 * 1024;
-  const MAX_ROWS = 2_000;
-  const ERROR_ABORT_RATIO = 0.1;
-
-  function parseAndValidateCsv(csv: string) {
-    const parsed = Papa.parse<Record<string, string>>(csv, {
-      header: true,
-      skipEmptyLines: true,
-      transformHeader: (h) => h.trim().toLowerCase(),
-    });
-
-    if (!parsed.data.length) return { errors: ["No rows found in the CSV file"], validRows: [] };
-    if (parsed.data.length > MAX_ROWS) return { errors: ["CSV too large — max 2,000 rows per import"], validRows: [] };
-
-    const errors: string[] = [];
-    interface ValidRow {
-      name: string;
-      email?: string;
-      phone?: string;
-      status: "LEAD" | "PROSPECT" | "CUSTOMER";
-      company: string;
-    }
-    const validRows: ValidRow[] = [];
-
-    for (const [index, row] of parsed.data.entries()) {
-      const normalized = {
-        name: row.name,
-        email: row.email,
-        phone: row.phone,
-        company: row.company,
-        status: row.status?.trim().toUpperCase(),
-      };
-
-      // Simple validation (mirrors contactImportRowSchema)
-      if (!normalized.name?.trim()) {
-        errors.push(`Row ${index + 2}: name is required`);
-        continue;
-      }
-      if (normalized.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized.email)) {
-        errors.push(`Row ${index + 2}: Invalid email address`);
-        continue;
-      }
-      if (!["LEAD", "PROSPECT", "CUSTOMER"].includes(normalized.status)) {
-        errors.push(`Row ${index + 2}: status must be LEAD, PROSPECT, or CUSTOMER`);
-        continue;
-      }
-      if (!normalized.company?.trim()) {
-        errors.push(`Row ${index + 2}: missing company name`);
-        continue;
-      }
-      validRows.push({ ...normalized, status: normalized.status as ValidRow["status"], company: normalized.company });
-    }
-
-    if (errors.length > parsed.data.length * ERROR_ABORT_RATIO) {
-      return { errors, validRows: [], aborted: true };
-    }
-    return { errors: [], validRows, aborted: false };
-  }
-
-  it("rejects CSV > 2 MB", () => {
-    // Valid email format but too many rows (fails on row count first)
-    const bigCsv = "name,email,company,status\n" + "Valid,valid@test.com,Test Co,PROSPECT\n".repeat(1100000);
-    expect(bigCsv.length).toBeGreaterThan(2 * 1024 * 1024);
-    const result = parseAndValidateCsv(bigCsv);
-    // Should fail on row count first (1.1M > 2000)
-    expect(result.errors[0]).toContain("2,000 rows");
+  it("rejects CSV larger than 2 MB", () => {
+    const header = "name,email,company,status\n";
+    const row = "Valid Person,valid@test.com,Test Co,PROSPECT\n";
+    const bigCsv = header + row.repeat(Math.ceil((2 * 1024 * 1024 + 1024) / row.length));
+    expect(bigCsv.length).toBeGreaterThan(MAX_CSV_BYTES);
+    const result = parseImportCsv(bigCsv);
+    expect(result.aborted).toBe(true);
+    expect(result.rejected).toBe("CSV too large — max 2 MB per import");
   });
 
-  it("rejects CSV > 2000 rows", () => {
-    const rows = Array.from({ length: 2001 }, (_, i) => `Name${i},test${i}@x.com,+15550000,Test Co,PROSPECT`);
+  it("rejects CSV with more than 2000 rows", () => {
+    const rows = Array.from({ length: MAX_ROWS + 1 }, (_, i) => `Name${i},test${i}@x.com,+15550000,Test Co,PROSPECT`);
     const csv = "name,email,phone,company,status\n" + rows.join("\n");
-    const result = parseAndValidateCsv(csv);
-    expect(result.errors).toContain("CSV too large — max 2,000 rows per import");
+    const result = parseImportCsv(csv);
+    expect(result.aborted).toBe(true);
+    expect(result.rejected).toBe("CSV too large — max 2,000 rows per import");
   });
 
-  it("aborts when > 10% rows invalid", () => {
+  it("aborts when more than 10% of rows fail validation", () => {
     const rows = [
       "Valid,valid@test.com,+15550000,Test Co,PROSPECT",
       "NoEmail,,+15550000,Test Co,PROSPECT",
       "NoCompany,valid2@test.com,+15550000,,PROSPECT",
     ];
     const csv = "name,email,phone,company,status\n" + rows.join("\n");
-    const result = parseAndValidateCsv(csv);
+    const result = parseImportCsv(csv);
     expect(result.aborted).toBe(true);
-    expect(result.validRows.length).toBe(0);
+    // validRows are returned but the caller (importContactsCsv) refuses to write them
+    expect(result.validRows).toHaveLength(2);
   });
 
-  it("accepts valid CSV with no abort", () => {
+  it("accepts a fully valid CSV", () => {
     const rows = [
       "Valid,valid@test.com,+15550000,Test Co,PROSPECT",
-      "Valid2,valid2@test.com,+15550000,Test Co,PROSPECT",
+      "Valid2,valid2@test.com,+15550000,Test Co,CUSTOMER",
     ];
     const csv = "name,email,phone,company,status\n" + rows.join("\n");
-    const result = parseAndValidateCsv(csv);
+    const result = parseImportCsv(csv);
     expect(result.aborted).toBe(false);
-    expect(result.validRows.length).toBe(2);
+    expect(result.validRows).toHaveLength(2);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it("missing company column is rejected", () => {
+  it("rejects rows missing company name", () => {
     const csv = "name,email,phone,company,status\nValid,valid@test.com,+15550000,,PROSPECT";
-    const result = parseAndValidateCsv(csv);
-    expect(result.validRows.length).toBe(0);
-    expect(result.errors.length).toBe(1);
+    const result = parseImportCsv(csv);
+    expect(result.validRows).toHaveLength(0);
     expect(result.errors[0]).toContain("missing company name");
+  });
+
+  it("rejects rows with malformed emails", () => {
+    const csv = "name,email,phone,company,status\nValid,not-an-email,+15550000,Test Co,PROSPECT";
+    const result = parseImportCsv(csv);
+    expect(result.validRows).toHaveLength(0);
+    expect(result.errors[0]).toContain("Invalid email");
+  });
+});
+
+describe("CSV double-import through the real action (integration)", () => {
+  it("second identical import reports everything skipped", async () => {
+    const csv = [
+      "name,email,phone,company,status",
+      "Valid,valid@test.com,+15550000,Test Co,PROSPECT",
+    ].join("\n");
+
+    const sales = await prisma.user.create({
+      data: { email: "imp-sales@test.com", name: "Sales", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    asUser({ id: sales.id, role: "SALES" });
+
+    // Dynamically import so the mock is definitely in place for the action module
+    const { importContactsCsv } = await import("@/lib/actions/contacts");
+
+    const first = await importContactsCsv(csv);
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.data.created).toBe(1);
+
+    const second = await importContactsCsv(csv);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.data.created).toBe(0);
+      expect(second.data.skipped).toBe(1);
+      expect(second.data.aborted).toBe(false);
+    }
+
+    const totalContacts = await prisma.contact.count({ where: { email: "valid@test.com" } });
+    expect(totalContacts).toBe(1);
   });
 });

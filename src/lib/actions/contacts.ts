@@ -113,25 +113,28 @@ export interface ImportSummary {
   aborted: boolean;
 }
 
-const MAX_CSV_BYTES = 2 * 1024 * 1024; // 2 MB
-const MAX_ROWS = 2_000;
+export const MAX_CSV_BYTES = 2 * 1024 * 1024; // 2 MB
+export const MAX_ROWS = 2_000;
 /** Abort the whole import when more than 10% of rows fail validation. */
-const ERROR_ABORT_RATIO = 0.1;
+export const ERROR_ABORT_RATIO = 0.1;
+
+export interface ImportRow {
+  name: string;
+  email?: string;
+  phone?: string;
+  status: "LEAD" | "PROSPECT" | "CUSTOMER";
+  company: string;
+}
 
 /**
- * CSV import with the enterprise hygiene rules:
- * - size caps (2 MB / 2,000 rows) enforced before anything touches the DB
- * - every row validated up front; >10% bad rows aborts the whole import
- * - accounts matched case-insensitively via a single prefetch (no N+1),
- *   missing ones created inside the same transaction as the contacts
- * - duplicates (same account + email, in DB or within the file) skipped
- * - exactly one audit entry per import
- * Expected columns: name,email,phone,company,status
+ * Pure CSV parsing + validation (no DB, no session). Used by `importContactsCsv`
+ * and directly by integration tests, so the caps and rules shipped in the action
+ * are the exact ones the tests exercise.
  */
-export async function importContactsCsv(csv: string): Promise<ActionResult<ImportSummary>> {
-  const session = await requireAuth();
-
-  if (csv.length > MAX_CSV_BYTES) return fail("CSV too large — max 2 MB per import");
+export function parseImportCsv(csv: string): { validRows: ImportRow[]; errors: string[]; aborted: boolean; rejected?: string } {
+  if (csv.length > MAX_CSV_BYTES) {
+    return { validRows: [], errors: [], aborted: true, rejected: "CSV too large — max 2 MB per import" };
+  }
 
   const parsed = Papa.parse<Record<string, string>>(csv, {
     header: true,
@@ -139,19 +142,15 @@ export async function importContactsCsv(csv: string): Promise<ActionResult<Impor
     transformHeader: (h) => h.trim().toLowerCase(),
   });
 
-  if (!parsed.data.length) return fail("No rows found in the CSV file");
-  if (parsed.data.length > MAX_ROWS) return fail("CSV too large — max 2,000 rows per import");
-
-  // 1) Validate every row before writing anything.
-  const errors: string[] = [];
-  interface ValidRow {
-    name: string;
-    email?: string;
-    phone?: string;
-    status: "LEAD" | "PROSPECT" | "CUSTOMER";
-    company: string;
+  if (!parsed.data.length) {
+    return { validRows: [], errors: [], aborted: true, rejected: "No rows found in the CSV file" };
   }
-  const validRows: ValidRow[] = [];
+  if (parsed.data.length > MAX_ROWS) {
+    return { validRows: [], errors: [], aborted: true, rejected: "CSV too large — max 2,000 rows per import" };
+  }
+
+  const errors: string[] = [];
+  const validRows: ImportRow[] = [];
   for (const [index, row] of parsed.data.entries()) {
     const check = contactImportRowSchema.safeParse({
       name: row.name,
@@ -177,9 +176,26 @@ export async function importContactsCsv(csv: string): Promise<ActionResult<Impor
     });
   }
 
-  if (errors.length > parsed.data.length * ERROR_ABORT_RATIO) {
-    return ok({ created: 0, skipped: 0, errors, aborted: true });
-  }
+  return { validRows, errors, aborted: errors.length > parsed.data.length * ERROR_ABORT_RATIO };
+}
+
+/**
+ * CSV import with the enterprise hygiene rules:
+ * - size caps (2 MB / 2,000 rows) enforced before anything touches the DB
+ * - every row validated up front; >10% bad rows aborts the whole import
+ * - accounts matched case-insensitively via a single prefetch (no N+1),
+ *   missing ones created inside the same transaction as the contacts
+ * - duplicates (same account + email, in DB or within the file) skipped
+ * - exactly one audit entry per import
+ * Expected columns: name,email,phone,company,status
+ */
+export async function importContactsCsv(csv: string): Promise<ActionResult<ImportSummary>> {
+  const session = await requireAuth();
+
+  // 1) Validate every row before writing anything (pure logic, shared with tests).
+  const { validRows, errors, aborted, rejected } = parseImportCsv(csv);
+  if (rejected) return fail(rejected);
+  if (aborted) return ok({ created: 0, skipped: 0, errors, aborted: true });
 
   // 2) Prefetch owned accounts in one query; match case-insensitively.
   const ownedAccounts = await db.account.findMany({

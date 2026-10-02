@@ -9,8 +9,16 @@ export interface AuditParams {
   changes: unknown;
 }
 
-/** Fields that must never end up in the audit trail. */
+/** Default redaction set: customer PII and credentials — always stripped. */
 const SENSITIVE_FIELDS = ["email", "phone", "passwordHash"] as const;
+
+/** For the User entity, `email` is the account identifier (not customer PII)
+ *  and the audit trail needs it to say which account was touched. */
+const USER_SENSITIVE_FIELDS = ["phone", "passwordHash"] as const;
+
+function sensitiveFieldsFor(entity: string): readonly string[] {
+  return entity === "User" ? USER_SENSITIVE_FIELDS : SENSITIVE_FIELDS;
+}
 
 /**
  * Strips sensitive fields from an audit payload — works for both plain record
@@ -33,7 +41,10 @@ export async function recordAudit(params: AuditParams): Promise<void> {
       entityId: params.entityId,
       action: params.action,
       userId: params.userId,
-      changes: redact(params.changes as Record<string, unknown>) as Prisma.InputJsonValue,
+      changes: redact(
+        params.changes as Record<string, unknown>,
+        sensitiveFieldsFor(params.entity)
+      ) as Prisma.InputJsonValue,
     },
   });
 }

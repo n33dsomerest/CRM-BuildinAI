@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffChanges } from "@/lib/audit";
+import { diffChanges, redact } from "@/lib/audit";
 
 describe("diffChanges", () => {
   it("reports changed fields with from/to values", () => {
@@ -28,5 +28,17 @@ describe("diffChanges", () => {
   it("treats null and undefined as empty strings", () => {
     const changes = diffChanges({ email: null }, { email: undefined });
     expect(changes).toEqual({});
+  });
+});
+
+describe("redact (entity-aware via recordAudit)", () => {
+  it("strips customer PII by default (Contact email/phone)", () => {
+    const result = redact({ name: "Jane", email: "jane@x.com", phone: "+1 555", status: "PROSPECT" });
+    expect(result).toEqual({ name: "Jane", status: "PROSPECT" });
+  });
+
+  it("strips passwordHash", () => {
+    const result = redact({ email: "a@b.c", passwordHash: "secret-hash" });
+    expect(result).toEqual({});
   });
 });

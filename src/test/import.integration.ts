@@ -11,7 +11,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { requireAuth } from "@/lib/session";
 // Import the REAL shipped logic - no reimplementation in the test.
-import { parseImportCsv, MAX_CSV_BYTES, MAX_ROWS, ERROR_ABORT_RATIO } from "@/lib/actions/contacts";
+import { parseImportCsv, MAX_CSV_BYTES, MAX_ROWS, ERROR_ABORT_RATIO } from "@/lib/csv-import";
 
 const asUser = (u: { id: string; role: "ADMIN" | "SALES" }) =>
   vi.mocked(requireAuth).mockResolvedValue({ user: u } as never);

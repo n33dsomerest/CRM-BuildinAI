@@ -7,8 +7,11 @@ import { NextResponse, type NextRequest } from "next/server";
  * the nonce to its inline bootstrap scripts, so `script-src` can stay strict
  * (no `unsafe-inline`). Styles still need `'unsafe-inline'` for
  * Tailwind/sonner runtime injections.
+ *
+ * Uses the Next 16 `proxy` file convention (the old `middleware` name is
+ * deprecated).
  */
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
 

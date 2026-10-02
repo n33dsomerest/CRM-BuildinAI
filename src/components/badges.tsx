@@ -1,6 +1,6 @@
 import type { ActivityType, ContactStatus, LeadSource, LeadStatus } from "@prisma/client";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 /* ── Contact lifecycle status ────────────────────────────────────────────── */
 

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -70,8 +70,16 @@ interface DealFormDialogProps {
   isAdmin: boolean;
 }
 
-export function DealFormDialog({
-  open,
+export function DealFormDialog({ open, onOpenChange, ...inner }: DealFormDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Mounted only while open → the form remounts fresh every time (no reset effects) */}
+      {open ? <DealFormInner onOpenChange={onOpenChange} {...inner} /> : null}
+    </Dialog>
+  );
+}
+
+function DealFormInner({
   onOpenChange,
   initial,
   defaultStageId,
@@ -81,7 +89,7 @@ export function DealFormDialog({
   contacts,
   currentUserId,
   isAdmin,
-}: DealFormDialogProps) {
+}: Omit<DealFormDialogProps, "open">) {
   const router = useRouter();
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -92,55 +100,37 @@ export function DealFormDialog({
   const {
     register,
     handleSubmit,
-    reset,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<DealFormValues>({
     resolver: zodResolver(dealSchema) as unknown as Resolver<DealFormValues>,
-    defaultValues: {
-      title: "",
-      value: "",
-      stageId: defaultStageId ?? stages[0]?.id ?? "",
-      accountId: "",
-      contactId: "",
-      ownerId: currentUserId,
-      expectedCloseDate: "",
-    },
+    defaultValues: initial
+      ? {
+          title: initial.title,
+          value: String(initial.value),
+          stageId: initial.stageId,
+          accountId: initialAccountId,
+          contactId: initial.contactId,
+          ownerId: initial.ownerId,
+          expectedCloseDate: initial.expectedCloseDate ? initial.expectedCloseDate.toISOString().slice(0, 10) : "",
+        }
+      : {
+          title: "",
+          value: "",
+          stageId: defaultStageId ?? stages[0]?.id ?? "",
+          accountId: "",
+          contactId: "",
+          ownerId: currentUserId,
+          expectedCloseDate: "",
+        },
   });
 
-  const stageId = watch("stageId");
-  const accountId = watch("accountId");
-  const ownerId = watch("ownerId");
+  const stageId = useWatch({ control, name: "stageId" });
+  const accountId = useWatch({ control, name: "accountId" });
+  const ownerId = useWatch({ control, name: "ownerId" });
+  const contactId = useWatch({ control, name: "contactId" });
   const accountContacts = contacts.filter((contact) => contact.accountId === accountId);
-
-  React.useEffect(() => {
-    if (!open) return;
-    setServerError(null);
-    setConfirmDelete(false);
-    if (initial) {
-      reset({
-        title: initial.title,
-        value: String(initial.value),
-        stageId: initial.stageId,
-        accountId: initialAccountId,
-        contactId: initial.contactId,
-        ownerId: initial.ownerId,
-        expectedCloseDate: initial.expectedCloseDate ? initial.expectedCloseDate.toISOString().slice(0, 10) : "",
-      });
-    } else {
-      reset({
-        title: "",
-        value: "",
-        stageId: defaultStageId ?? stages[0]?.id ?? "",
-        accountId: "",
-        contactId: "",
-        ownerId: currentUserId,
-        expectedCloseDate: "",
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initial]);
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -171,8 +161,7 @@ export function DealFormDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{initial ? "Edit deal" : "New deal"}</DialogTitle>
             <DialogDescription>
@@ -246,7 +235,7 @@ export function DealFormDialog({
               </div>
               <div className="grid gap-2">
                 <Label>Contact</Label>
-                <Select value={watch("contactId")} onValueChange={(value) => setValue("contactId", value)}>
+                <Select value={contactId || ""} onValueChange={(value) => setValue("contactId", value)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select contact" />
                   </SelectTrigger>
@@ -310,8 +299,7 @@ export function DealFormDialog({
               </div>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
+      </DialogContent>
 
       <ConfirmDeleteDialog
         open={confirmDelete}

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, UserRoundPlus } from "lucide-react";
 import { toast } from "sonner";
@@ -45,14 +45,14 @@ export function CreateUserDialog() {
     handleSubmit,
     reset,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema) as unknown as Resolver<CreateUserFormValues>,
     defaultValues: { name: "", email: "", password: "", role: "SALES" },
   });
 
-  const role = watch("role");
+  const role = useWatch({ control, name: "role" });
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);

@@ -35,13 +35,20 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
       return fail("Deal not found");
     }
 
+    // ADMIN may delegate; SALES is always the assignee of their own tasks.
+    let assigneeId = session.user.id;
+    if (session.user.role === "ADMIN" && data.assigneeId) {
+      if (!(await assertUserExists(data.assigneeId))) return fail("Selected assignee does not exist");
+      assigneeId = data.assigneeId;
+    }
+
     const created = await db.task.create({
       data: {
         title: data.title,
         dueDate: new Date(`${data.dueDate}T12:00:00`),
         contactId: data.contactId,
         dealId: data.dealId,
-        assigneeId: session.user.id,
+        assigneeId,
       },
     });
 
@@ -50,7 +57,7 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
       entityId: created.id,
       action: "CREATE",
       userId: session.user.id,
-      changes: { title: data.title, dueDate: data.dueDate },
+      changes: { title: data.title, dueDate: data.dueDate, assigneeId },
     });
     revalidateTaskViews();
     return ok({ id: created.id });

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Gauge, KanbanSquare, ScrollText, Users, UserPlus, ClipboardList } from "lucide-react";
+import { Building2, Gauge, KanbanSquare, ScrollText, Users, UserPlus, ClipboardList } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -41,6 +41,9 @@ export function CommandMenu({ open, onOpenChange, isAdmin }: CommandMenuProps) {
           </CommandItem>
           <CommandItem onSelect={() => go("/contacts")}>
             <Users className="size-4" /> Contacts
+          </CommandItem>
+          <CommandItem onSelect={() => go("/accounts")}>
+            <Building2 className="size-4" /> Accounts
           </CommandItem>
           <CommandItem onSelect={() => go("/deals")}>
             <KanbanSquare className="size-4" /> Deals

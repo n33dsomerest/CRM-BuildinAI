@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAuth } from "@/lib/session";
-import { getTasksForUser } from "@/lib/queries";
+import { getTasksForUser, getUsersList } from "@/lib/queries";
 import { PageHeader } from "@/components/page-header";
 import { TaskList } from "@/components/tasks/task-list";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
@@ -16,7 +16,10 @@ export default async function TasksPage({
   const session = await requireAuth();
   const params = await searchParams;
   const scope = params.scope === "all" && session.user.role === "ADMIN" ? "all" : "mine";
-  const tasks = await getTasksForUser({ id: session.user.id, role: session.user.role }, scope);
+  const [tasks, users] = await Promise.all([
+    getTasksForUser({ id: session.user.id, role: session.user.role }, scope),
+    getUsersList(),
+  ]);
   const openCount = tasks.filter((task) => task.status === "OPEN").length;
 
   return (
@@ -46,7 +49,10 @@ export default async function TasksPage({
                 </Link>
               </>
             ) : null}
-            <CreateTaskDialog />
+            <CreateTaskDialog
+              users={users.map((user) => ({ id: user.id, name: user.name }))}
+              isAdmin={session.user.role === "ADMIN"}
+            />
           </div>
         }
       />

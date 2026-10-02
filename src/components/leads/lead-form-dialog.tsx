@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -52,30 +52,34 @@ const defaults = (): LeadFormValues => ({
   status: "NEW",
 });
 
-export function LeadFormDialog({ open, onOpenChange, initial, editingId, currentUserId }: LeadFormDialogProps) {
+export function LeadFormDialog({ open, onOpenChange, initial, editingId }: LeadFormDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {open ? <LeadFormInner onOpenChange={onOpenChange} initial={initial} editingId={editingId} /> : null}
+    </Dialog>
+  );
+}
+
+function LeadFormInner({
+  onOpenChange,
+  initial,
+  editingId,
+}: Omit<LeadFormDialogProps, "open" | "currentUserId">) {
   const [serverError, setServerError] = React.useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
-    reset,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<LeadFormValues>({
     resolver: zodResolver(leadSchema) as unknown as Resolver<LeadFormValues>,
-    defaultValues: defaults(),
+    defaultValues: initial ?? defaults(),
   });
 
-  const source = watch("source");
-  const status = watch("status");
-
-  React.useEffect(() => {
-    if (open) {
-      reset(initial ?? defaults());
-      setServerError(null);
-    }
-  }, [open, initial, reset, currentUserId]);
+  const source = useWatch({ control, name: "source" });
+  const status = useWatch({ control, name: "status" });
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -89,7 +93,6 @@ export function LeadFormDialog({ open, onOpenChange, initial, editingId, current
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{editingId ? "Edit lead" : "New lead"}</DialogTitle>
@@ -164,7 +167,6 @@ export function LeadFormDialog({ open, onOpenChange, initial, editingId, current
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+    </DialogContent>
   );
 }

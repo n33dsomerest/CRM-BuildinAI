@@ -33,7 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 
 export interface ShellUser {
@@ -47,6 +47,7 @@ const NAV_MAIN = [
   { href: "/", label: "Dashboard", icon: Gauge },
   { href: "/leads", label: "Leads", icon: UserPlus },
   { href: "/contacts", label: "Contacts", icon: Users },
+  { href: "/accounts", label: "Accounts", icon: Building2 },
   { href: "/deals", label: "Deals", icon: KanbanSquare },
   { href: "/tasks", label: "Tasks", icon: ClipboardList },
 ];

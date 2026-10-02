@@ -9,7 +9,7 @@ import { deleteTask, toggleTask } from "@/lib/actions/tasks";
 import { formatDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 interface TaskListProps {
   tasks: TaskRow[];

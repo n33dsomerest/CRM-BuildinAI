@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -70,8 +70,16 @@ const defaults = (currentUserId: string): ContactFormValues => ({
   ownerId: currentUserId,
 });
 
-export function ContactFormDialog({
-  open,
+export function ContactFormDialog({ open, onOpenChange, ...inner }: ContactFormDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Mounted only while open → the form remounts fresh every time (no reset effects) */}
+      {open ? <ContactFormInner onOpenChange={onOpenChange} {...inner} /> : null}
+    </Dialog>
+  );
+}
+
+function ContactFormInner({
   onOpenChange,
   initial,
   editingId,
@@ -79,35 +87,25 @@ export function ContactFormDialog({
   accounts,
   currentUserId,
   isAdmin,
-}: ContactFormDialogProps) {
+}: Omit<ContactFormDialogProps, "open">) {
   const [newAccountMode, setNewAccountMode] = React.useState(false);
   const [newAccountName, setNewAccountName] = React.useState("");
   const [serverError, setServerError] = React.useState<string | null>(null);
 
   const {
+    control,
     register,
     handleSubmit,
-    reset,
     setValue,
-    watch,
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues>({
     resolver: zodResolver(contactSchema) as unknown as Resolver<ContactFormValues>,
-    defaultValues: defaults(currentUserId),
+    defaultValues: initial ?? defaults(currentUserId),
   });
 
-  const accountId = watch("accountId");
-  const ownerId = watch("ownerId");
-  const status = watch("status");
-
-  React.useEffect(() => {
-    if (open) {
-      reset(initial ?? defaults(currentUserId));
-      setNewAccountMode(false);
-      setNewAccountName("");
-      setServerError(null);
-    }
-  }, [open, initial, reset, currentUserId]);
+  const accountId = useWatch({ control, name: "accountId" });
+  const ownerId = useWatch({ control, name: "ownerId" });
+  const status = useWatch({ control, name: "status" });
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -136,7 +134,6 @@ export function ContactFormDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{editingId ? "Edit contact" : "New contact"}</DialogTitle>
@@ -255,7 +252,6 @@ export function ContactFormDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+    </DialogContent>
   );
 }

@@ -10,6 +10,7 @@ A production-ready, full-stack **Customer Relationship Management** app built to
 | --- | --- |
 | **Dashboard** | Pipeline value, probability-weighted forecast, total contacts, won deals, conversion rate, funnel by stage, my tasks, recent activity |
 | **Leads** | Raw prospect capture, status qualification, search/filter, **one-click Convert** → creates Account + Contact + first-stage Deal in a single transaction |
+| **Accounts** | Dedicated company pages with contacts/deal lists, open-value rollup, full CRUD with cascade-delete warnings |
 | **Accounts & Contacts** | Accounts (companies) separated from contacts (people), lifecycle status (Lead/Prospect/Customer), search / status filter / pagination, **CSV import** (dedupes by account+email, auto-creates missing accounts) and **CSV export**, 360° contact page (info, deals, tasks, activity timeline) |
 | **Deals** | Interactive drag & drop **Kanban** (6 seeded stages), per-column deal count, total value and weighted value, Won/Lost columns highlighted |
 | **Activities** | Notes, calls, meetings, emails linked to contacts and deals with a timeline view |

@@ -489,6 +489,139 @@ export async function getContactsForSelect(user: ScopedUser) {
   });
 }
 
+/* ── Accounts ────────────────────────────────────────────────────────────── */
+
+export interface AccountRow {
+  id: string;
+  name: string;
+  industry: string | null;
+  website: string | null;
+  phone: string | null;
+  ownerId: string;
+  ownerName: string;
+  contactCount: number;
+  dealCount: number;
+  openValue: number;
+}
+
+export interface AccountsQuery {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function getAccountsPage(user: ScopedUser, query: AccountsQuery = {}): Promise<Paged<AccountRow>> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(50, Math.max(5, query.pageSize ?? 10));
+
+  const AND: Prisma.AccountWhereInput[] = [ownerFilter(user)];
+  if (query.search?.trim()) {
+    const term = query.search.trim();
+    AND.push({
+      OR: [
+        { name: { contains: term, mode: "insensitive" } },
+        { industry: { contains: term, mode: "insensitive" } },
+      ],
+    });
+  }
+  const where: Prisma.AccountWhereInput = { AND };
+
+  const [rows, total] = await Promise.all([
+    db.account.findMany({
+      where,
+      orderBy: { name: "asc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: {
+        owner: { select: { name: true } },
+        _count: { select: { contacts: true, deals: true } },
+      },
+    }),
+    db.account.count({ where }),
+  ]);
+
+  // Open (non-won/lost) deal value per account, computed in one aggregate.
+  const accountIds = rows.map((r) => r.id);
+  const valueGroups = accountIds.length
+    ? await db.deal.groupBy({
+        by: ["accountId"],
+        where: { accountId: { in: accountIds }, stage: { isWon: false, isLost: false } },
+        _sum: { value: true },
+      })
+    : [];
+  const openValueByAccount = new Map(
+    valueGroups.map((g) => [g.accountId, Number(g._sum.value ?? 0)])
+  );
+
+  return {
+    rows: rows.map((a) => ({
+      id: a.id,
+      name: a.name,
+      industry: a.industry,
+      website: a.website,
+      phone: a.phone,
+      ownerId: a.ownerId,
+      ownerName: a.owner.name,
+      contactCount: a._count.contacts,
+      dealCount: a._count.deals,
+      openValue: openValueByAccount.get(a.id) ?? 0,
+    })),
+    total,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+export interface AccountDetail {
+  id: string;
+  name: string;
+  industry: string | null;
+  website: string | null;
+  phone: string | null;
+  ownerName: string;
+  contacts: { id: string; name: string; email: string | null; status: ContactStatus }[];
+  deals: { id: string; title: string; value: number; stageName: string; isWon: boolean; isLost: boolean }[];
+}
+
+export async function getAccountDetail(user: ScopedUser, id: string): Promise<AccountDetail | null> {
+  const account = await db.account.findFirst({
+    where: { id, ...ownerFilter(user) },
+    include: {
+      owner: { select: { name: true } },
+      contacts: { orderBy: { name: "asc" }, select: { id: true, name: true, email: true, status: true } },
+      deals: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          title: true,
+          value: true,
+          stage: { select: { name: true, isWon: true, isLost: true } },
+        },
+      },
+    },
+  });
+  if (!account) return null;
+
+  return {
+    id: account.id,
+    name: account.name,
+    industry: account.industry,
+    website: account.website,
+    phone: account.phone,
+    ownerName: account.owner.name,
+    contacts: account.contacts,
+    deals: account.deals.map((d) => ({
+      id: d.id,
+      title: d.title,
+      value: Number(d.value),
+      stageName: d.stage.name,
+      isWon: d.stage.isWon,
+      isLost: d.stage.isLost,
+    })),
+  };
+}
+
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 
 export interface AuditLogQuery {

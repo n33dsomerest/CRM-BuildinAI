@@ -100,6 +100,8 @@ export const taskSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Due date is required"),
   contactId: z.preprocess(emptyToUndefined, z.string().optional()),
   dealId: z.preprocess(emptyToUndefined, z.string().optional()),
+  // ADMIN may delegate; SALES is forced to self in the action.
+  assigneeId: z.preprocess(emptyToUndefined, z.string().optional()),
 });
 
 /* ── Users (admin) ───────────────────────────────────────────────────────── */

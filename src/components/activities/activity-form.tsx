@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, SendHorizonal } from "lucide-react";
 import { toast } from "sonner";
@@ -42,15 +42,15 @@ export function ActivityForm({ contactId, deals }: ActivityFormProps) {
     handleSubmit,
     reset,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<ActivityFormValues>({
     resolver: zodResolver(activitySchema) as unknown as Resolver<ActivityFormValues>,
     defaultValues: { contactId, dealId: "", type: "NOTE", subject: "", body: "" },
   });
 
-  const type = watch("type");
-  const dealId = watch("dealId");
+  const type = useWatch({ control, name: "type" });
+  const dealId = useWatch({ control, name: "dealId" });
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);

@@ -25,7 +25,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 

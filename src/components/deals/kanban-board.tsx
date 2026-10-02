@@ -11,7 +11,7 @@ import { DealFormDialog } from "@/components/deals/deal-form-dialog";
 import { formatCompactCurrency, formatDate, initials } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 interface UsersOption {
   id: string;

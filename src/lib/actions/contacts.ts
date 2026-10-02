@@ -110,16 +110,28 @@ export interface ImportSummary {
   created: number;
   skipped: number;
   errors: string[];
+  aborted: boolean;
 }
 
+const MAX_CSV_BYTES = 2 * 1024 * 1024; // 2 MB
+const MAX_ROWS = 2_000;
+/** Abort the whole import when more than 10% of rows fail validation. */
+const ERROR_ABORT_RATIO = 0.1;
+
 /**
- * CSV import with the enterprise hygiene rules: rows are validated, accounts are
- * matched case-insensitively (created when missing) and duplicates
- * (same account + email) are skipped.
+ * CSV import with the enterprise hygiene rules:
+ * - size caps (2 MB / 2,000 rows) enforced before anything touches the DB
+ * - every row validated up front; >10% bad rows aborts the whole import
+ * - accounts matched case-insensitively via a single prefetch (no N+1),
+ *   missing ones created inside the same transaction as the contacts
+ * - duplicates (same account + email, in DB or within the file) skipped
+ * - exactly one audit entry per import
  * Expected columns: name,email,phone,company,status
  */
 export async function importContactsCsv(csv: string): Promise<ActionResult<ImportSummary>> {
   const session = await requireAuth();
+
+  if (csv.length > MAX_CSV_BYTES) return fail("CSV too large — max 2 MB per import");
 
   const parsed = Papa.parse<Record<string, string>>(csv, {
     header: true,
@@ -128,66 +140,125 @@ export async function importContactsCsv(csv: string): Promise<ActionResult<Impor
   });
 
   if (!parsed.data.length) return fail("No rows found in the CSV file");
+  if (parsed.data.length > MAX_ROWS) return fail("CSV too large — max 2,000 rows per import");
 
-  let created = 0;
-  let skipped = 0;
+  // 1) Validate every row before writing anything.
   const errors: string[] = [];
-
+  interface ValidRow {
+    name: string;
+    email?: string;
+    phone?: string;
+    status: "LEAD" | "PROSPECT" | "CUSTOMER";
+    company: string;
+  }
+  const validRows: ValidRow[] = [];
   for (const [index, row] of parsed.data.entries()) {
-    const normalized = {
+    const check = contactImportRowSchema.safeParse({
       name: row.name,
       email: row.email,
       phone: row.phone,
       company: row.company,
       status: row.status?.trim().toUpperCase(),
-    };
-    const check = contactImportRowSchema.safeParse(normalized);
+    });
     if (!check.success) {
       errors.push(`Row ${index + 2}: ${check.error.issues[0]?.message ?? "invalid row"}`);
       continue;
     }
-    const data = check.data;
+    if (!check.data.company) {
+      errors.push(`Row ${index + 2}: missing company name`);
+      continue;
+    }
+    validRows.push({
+      name: check.data.name,
+      email: check.data.email,
+      phone: check.data.phone,
+      status: check.data.status,
+      company: check.data.company,
+    });
+  }
 
-    try {
-      let account = data.company
-        ? await db.account.findFirst({
-            where: { name: { equals: data.company, mode: "insensitive" }, ...ownerFilter(session.user) },
-          })
-        : null;
+  if (errors.length > parsed.data.length * ERROR_ABORT_RATIO) {
+    return ok({ created: 0, skipped: 0, errors, aborted: true });
+  }
 
-      if (!account && data.company) {
-        account = await db.account.create({
-          data: { name: data.company, ownerId: session.user.id },
+  // 2) Prefetch owned accounts in one query; match case-insensitively.
+  const ownedAccounts = await db.account.findMany({
+    where: ownerFilter(session.user),
+    select: { id: true, name: true },
+  });
+  const accountIdsByName = new Map<string, string>();
+  for (const account of ownedAccounts) accountIdsByName.set(account.name.toLowerCase(), account.id);
+
+  // 3) Prefetch existing contact emails for the involved accounts (duplicate detection).
+  const companies = [...new Set(validRows.map((row) => row.company))];
+  const neededAccountIds = companies
+    .map((company) => accountIdsByName.get(company.toLowerCase()))
+    .filter((id): id is string => Boolean(id));
+  const existingContacts = neededAccountIds.length
+    ? await db.contact.findMany({
+        where: { accountId: { in: neededAccountIds }, email: { not: null } },
+        select: { accountId: true, email: true },
+      })
+    : [];
+  const seenPairs = new Set(existingContacts.map((c) => `${c.accountId}|${c.email?.toLowerCase()}`));
+
+  // 4) Build the write set inside a single transaction — no partial commits.
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
+  const missingCompanies = companies.filter((company) => !accountIdsByName.has(company.toLowerCase()));
+
+  try {
+    await db.$transaction(async (tx) => {
+      for (const company of missingCompanies) {
+        const account = await tx.account.create({
+          data: { name: company, ownerId: session.user.id },
+          select: { id: true, name: true },
+        });
+        accountIdsByName.set(account.name.toLowerCase(), account.id);
+      }
+
+      const toCreate: {
+        name: string;
+        email?: string;
+        phone?: string;
+        status: "LEAD" | "PROSPECT" | "CUSTOMER";
+        accountId: string;
+        ownerId: string;
+      }[] = [];
+
+      for (const row of validRows) {
+        const accountId = accountIdsByName.get(row.company.toLowerCase());
+        if (!accountId) {
+          failed += 1;
+          continue;
+        }
+        const pair = `${accountId}|${row.email?.toLowerCase() ?? ""}`;
+        if (row.email && seenPairs.has(pair)) {
+          skipped += 1;
+          continue;
+        }
+        if (row.email) seenPairs.add(pair);
+        toCreate.push({
+          name: row.name,
+          email: row.email,
+          phone: row.phone,
+          status: row.status,
+          accountId,
+          ownerId: session.user.id,
         });
       }
-      if (!account) {
-        errors.push(`Row ${index + 2}: missing company name`);
-        continue;
-      }
 
-      const duplicate = data.email
-        ? await db.contact.findFirst({ where: { accountId: account.id, email: data.email } })
-        : null;
-      if (duplicate) {
-        skipped += 1;
-        continue;
+      // createMany in chunks keeps memory bounded on large files.
+      const CHUNK = 500;
+      for (let i = 0; i < toCreate.length; i += CHUNK) {
+        const result = await tx.contact.createMany({ data: toCreate.slice(i, i + CHUNK) });
+        created += result.count;
       }
-
-      const contact = await db.contact.create({
-        data: {
-          name: data.name,
-          email: data.email,
-          phone: data.phone,
-          status: data.status,
-          accountId: account.id,
-          ownerId: session.user.id,
-        },
-      });
-      created += 1;
-    } catch (error) {
-      logError("importContactsCsv row", error);
-      errors.push(`Row ${index + 2}: could not be imported`);
-    }
+    });
+  } catch (error) {
+    logError("importContactsCsv", error);
+    return fail("Import failed — nothing was written. Please check the file and try again.");
   }
 
   await recordAudit({
@@ -195,9 +266,9 @@ export async function importContactsCsv(csv: string): Promise<ActionResult<Impor
     entityId: "csv-import",
     action: "CREATE",
     userId: session.user.id,
-    changes: { source: "csv-import", created, skipped },
+    changes: { source: "csv-import", created, skipped, failed },
   });
 
   revalidateContactViews();
-  return ok({ created, skipped, errors });
+  return ok({ created, skipped, errors, aborted: false });
 }

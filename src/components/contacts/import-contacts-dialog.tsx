@@ -16,13 +16,26 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+const MAX_ROWS = 2_000;
+const MAX_BYTES = 2 * 1024 * 1024;
+
+function countDataRows(csv: string): number {
+  const lines = csv.trim().split(/\r?\n/);
+  return Math.max(0, lines.length - 1); // minus header
+}
+
 export function ImportContactsDialog() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [csv, setCsv] = React.useState("");
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
-  const [summary, setSummary] = React.useState<{ created: number; skipped: number; errors: string[] } | null>(null);
+  const [summary, setSummary] = React.useState<{
+    created: number;
+    skipped: number;
+    errors: string[];
+    aborted: boolean;
+  } | null>(null);
 
   const handleFile = async (file: File | undefined) => {
     if (!file) return;
@@ -31,6 +44,14 @@ export function ImportContactsDialog() {
   };
 
   const handleImport = async () => {
+    if (csv.length > MAX_BYTES) {
+      toast.error("CSV too large — max 2 MB per import");
+      return;
+    }
+    if (countDataRows(csv) > MAX_ROWS) {
+      toast.error("CSV too large — max 2,000 rows per import");
+      return;
+    }
     setPending(true);
     setSummary(null);
     const result = await importContactsCsv(csv);
@@ -40,6 +61,10 @@ export function ImportContactsDialog() {
       return;
     }
     setSummary(result.data);
+    if (result.data.aborted) {
+      toast.error("Import aborted — too many invalid rows, nothing was written");
+      return;
+    }
     if (result.data.created > 0) {
       toast.success(`Imported ${result.data.created} contacts`);
       router.refresh();
@@ -97,6 +122,11 @@ export function ImportContactsDialog() {
           />
           {summary ? (
             <div className="rounded-md border bg-muted/50 p-3 text-sm">
+              {summary.aborted ? (
+                <p className="mb-2 font-medium text-destructive">
+                  Import aborted — more than 10% of rows failed validation. Nothing was written.
+                </p>
+              ) : null}
               <p>
                 Created <span className="font-semibold text-emerald-600 dark:text-emerald-400">{summary.created}</span>{" "}
                 · Skipped <span className="font-semibold">{summary.skipped}</span> · Errors{" "}

@@ -34,11 +34,21 @@ const appUrls = [process.env.DIRECT_URL, process.env.DATABASE_URL]
   .filter((v): v is string => Boolean(v))
   .map(normalizeDbUrl);
 
-if (appUrls.includes(normalizeDbUrl(testDbUrl))) {
+/**
+ * Opt-in flag: the target database is known-disposable (CI service container,
+ * local scratch DB). Set TEST_DB_DISPOSABLE=1 to allow truncating a database
+ * that is also the app database. Deliberately NOT inferred from CI=true —
+ * this guard exists to prevent data loss, so it fails closed by default and
+ * the environment must state the database is throwaway.
+ */
+const disposable = process.env.TEST_DB_DISPOSABLE === "1";
+
+if (!disposable && appUrls.includes(normalizeDbUrl(testDbUrl))) {
   throw new Error(
     "Integration tests refuse to run: DIRECT_URL_TEST / DATABASE_URL_TEST point at the same " +
       "database as DATABASE_URL / DIRECT_URL. These tests TRUNCATE every table on each run. " +
-      "Point the *_TEST variables at a separate throwaway database."
+      "Point the *_TEST variables at a separate throwaway database, or set " +
+      "TEST_DB_DISPOSABLE=1 if this database really is ephemeral."
   );
 }
 

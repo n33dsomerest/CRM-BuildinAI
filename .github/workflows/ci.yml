@@ -61,6 +61,9 @@ jobs:
       DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/crm_ci_test?schema=public"
       DATABASE_URL_TEST: "postgresql://postgres:postgres@localhost:5432/crm_ci_test?schema=public"
       DIRECT_URL_TEST: "postgresql://postgres:postgres@localhost:5432/crm_ci_test?schema=public"
+      # CI's postgres service exists only to run these tests - it is the app
+      # database AND the test database at once, so the equality guard is opted out.
+      TEST_DB_DISPOSABLE: "1"
       AUTH_SECRET: "ci-only-secret-not-used-for-real-auth"
     steps:
       - uses: actions/checkout@v4

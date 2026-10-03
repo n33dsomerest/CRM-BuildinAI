@@ -15,7 +15,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:prune-audit": "tsx prisma/retention.ts",
     "db:studio": "prisma studio",
-    "pretest:integration": "node -e \"const s = require('fs').readFileSync('package.json','utf8');if (/postgresql:\\/\\/[^'\\\"]*:[^'\\\"]*@/.test(s)) {  console.error('BLOCKED: credential literal in package.json - move test DB URLs to env/.env');  process.exit(1);}\""
+    "pretest:integration": "npm run check:secrets",
+    "ai:check": "node scripts/ai-check.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

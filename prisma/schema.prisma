@@ -55,13 +55,13 @@ enum AuditAction {
 }
 
 model User {
-  id              String   @id @default(cuid())
-  email           String   @unique
-  passwordHash    String
-  name            String
-  role            Role     @default(SALES)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(SALES)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   accounts   Account[]  @relation("AccountOwner")
   contacts   Contact[]  @relation("ContactOwner")
@@ -217,6 +217,31 @@ model Task {
 
   @@index([assigneeId, status])
   @@index([dueDate])
+}
+
+model AiUsage {
+  id           String   @id @default(cuid())
+  userId       String
+  feature      String // "summarize" | "draft" | "score" | "search" | "insight"
+  ok           Boolean  @default(true)
+  error        String? // error class only, never prompt or completion text
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  model        String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([feature, createdAt])
+}
+
+model AiCache {
+  id        String   @id @default(cuid())
+  key       String   @unique // sha256(feature + normalized input)
+  feature   String
+  response  String // validated JSON completion - served free, no quota cost
+  createdAt DateTime @default(now())
+
+  @@index([feature, createdAt])
 }
 
 model AuditLog {

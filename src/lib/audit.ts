@@ -9,8 +9,13 @@ export interface AuditParams {
   changes: unknown;
 }
 
+/** Customer PII fields — the single source of truth shared with the AI prompt
+ *  redactor (src/lib/ai/redact.ts) so prompt hygiene can never drift from
+ *  audit redaction. */
+export const PII_FIELDS = ["email", "phone"] as const;
+
 /** Default redaction set: customer PII and credentials — always stripped. */
-const SENSITIVE_FIELDS = ["email", "phone", "passwordHash"] as const;
+const SENSITIVE_FIELDS = [...PII_FIELDS, "passwordHash"] as const;
 
 /** For the User entity, `email` is the account identifier (not customer PII)
  *  and the audit trail needs it to say which account was touched. */

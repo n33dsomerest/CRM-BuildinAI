@@ -114,7 +114,7 @@ git push -u origin main
 
 ### 4. Integration tests (optional)
 
-   Create a second database in your Neon project (e.g. `crmglm_test`), apply the schema
+   Create a second database in your Neon project (e.g. `crm_test`), apply the schema
    (`npx prisma migrate deploy` with its DIRECT_URL), then run `npm run test:integration`.
 
 5. Run migrations + seed in production

@@ -52,8 +52,9 @@ Set two variables in `.env` (and in Vercel's environment settings) - never commi
 
 Then run `npm run ai:check` - it validates the key and confirms both models are reachable.
 
-**Quota:** every user gets 20 AI requests per rolling 24 hours, counted per request (failures
-and retries included). Cache hits are free. Token usage is recorded for cost visibility only.
+**Quota:** every user gets 20 AI actions per rolling 24 hours. One click is one slot even if
+the provider needed retries; failures occupy the slot like successes. Cache hits are free.
+Token usage is recorded for cost visibility only.
 The app never auto-writes to the CRM with AI: the summarizer and email drafts produce editable
 drafts, and scoring is a suggestion with reasons - a human confirms everything.
 

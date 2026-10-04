@@ -1,9 +1,13 @@
 /**
  * Quota policy — pure functions, unit-tested without a database.
  *
- * Budget: 20 requests per user per day, counted by REQUEST COUNT (failures and
- * retries included — a bug must not be able to loop indefinitely on someone
- * else's budget). Tokens are recorded for cost visibility only, never limited.
+ * Budget: 20 requests per user per day, counted by USER-INITIATED ACTION. One
+ * action is one slot regardless of how many upstream HTTP attempts (incl.
+ * retries) it needed — the reservation layer (quota.ts) guarantees this, so a
+ * flaky provider cannot burn three slots for one click while a bug still
+ * cannot loop indefinitely on someone else's budget. Failures occupy their
+ * slot like successes do. Tokens are recorded for cost visibility, never
+ * limited.
  *
  * Window: ROLLING 24 hours, not a calendar day. A calendar reset would hand
  * every user a fresh 20 at an arbitrary midnight hour; the rolling window

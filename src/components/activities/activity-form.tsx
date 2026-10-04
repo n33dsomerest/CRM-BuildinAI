@@ -52,7 +52,6 @@ export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = fal
     handleSubmit,
     reset,
     setValue,
-    watch,
     getValues,
     formState: { errors, isSubmitting },
   } = useForm<ActivityFormValues>({
@@ -63,7 +62,6 @@ export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = fal
   const type = useWatch({ control, name: "type" });
   const dealId = useWatch({ control, name: "dealId" });
   const body = useWatch({ control, name: "body" });
-  const summary = useWatch({ control, name: "summary" });
   const sentiment = useWatch({ control, name: "sentiment" });
 
   const summarize = async () => {

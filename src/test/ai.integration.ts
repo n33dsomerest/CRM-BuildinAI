@@ -372,3 +372,38 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
     expect(scored).toBe(1);
   });
 });
+
+describe("quota reservation under concurrency (integration)", () => {
+  it("concurrent scoreLead calls can never exceed the daily quota", async () => {
+    const owner = await prisma.user.create({
+      data: { email: "race-owner@test.com", name: "Race", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    asUser({ id: owner.id, role: "SALES" });
+
+    // 5 leads, but only 2 quota slots left
+    for (let i = 0; i < 5; i++) {
+      await prisma.lead.create({
+        data: { name: `Race Lead ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
+      });
+    }
+    await prisma.aiUsage.createMany({
+      data: Array.from({ length: 18 }, (_, i) => ({
+        userId: owner.id,
+        feature: "score",
+        ok: true,
+        createdAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    });
+
+    const leads = await prisma.lead.findMany({ where: { ownerId: owner.id, score: null }, select: { id: true } });
+    const results = await Promise.all(leads.map((l) => scoreLead(l.id)));
+
+    const succeeded = results.filter((r) => r.ok).length;
+    const rows = await prisma.aiUsage.count({ where: { userId: owner.id } });
+
+    // 18 pre-seeded + at most 2 reservations = 20, never more
+    expect(rows).toBeLessThanOrEqual(20);
+    expect(succeeded).toBe(2);
+    expect(results.filter((r) => !r.ok).length).toBe(3);
+  });
+});

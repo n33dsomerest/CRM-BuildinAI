@@ -1,14 +1,17 @@
-import { DAILY_QUOTA, computeQuotaState, quotaExhaustedMessage, type QuotaState } from "@/lib/ai/quota-policy";
+import { DAILY_QUOTA, WINDOW_MS, quotaExhaustedMessage, type QuotaState } from "@/lib/ai/quota-policy";
 import { db } from "@/lib/db";
 
 /**
  * DB-backed quota accounting on top of the pure policy in quota-policy.ts.
- * Every upstream attempt (successes AND failures) is recorded — see 0.4.
- * Cache hits never reach this module.
+ *
+ * Reservation model: one AiUsage row per USER-INITIATED AI ACTION, created
+ * atomically (advisory-lock serialised) BEFORE the provider is called, then
+ * finalised with the outcome. Concurrent requests therefore cannot exceed the
+ * daily budget, and one user action is one slot no matter how many HTTP
+ * attempts the provider needed internally. Cache hits never reach this module.
  */
 
-export interface ConsumeParams {
-  feature: string;
+export interface FinalizeResult {
   ok: boolean;
   inputTokens?: number;
   outputTokens?: number;
@@ -18,30 +21,48 @@ export interface ConsumeParams {
 }
 
 export async function getQuotaState(userId: string, now = new Date()): Promise<QuotaState> {
-  const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const attempts = await db.aiUsage.findMany({
-    where: { userId, createdAt: { gt: windowStart } },
-    select: { createdAt: true },
-  });
-  return computeQuotaState(attempts, now);
+  const windowStart = new Date(now.getTime() - WINDOW_MS);
+  const windowWhere = { userId, createdAt: { gt: windowStart } };
+  const [used, oldest] = await Promise.all([
+    db.aiUsage.count({ where: windowWhere }),
+    db.aiUsage.findFirst({ where: windowWhere, orderBy: { createdAt: "asc" }, select: { createdAt: true } }),
+  ]);
+  // Same arithmetic as computeQuotaState in quota-policy.ts (the spec), using
+  // count() + the oldest entry instead of loading every row in the window.
+  const remaining = Math.max(0, DAILY_QUOTA - used);
+  return {
+    used,
+    remaining,
+    exhausted: remaining === 0,
+    resetsAt: remaining === 0 && oldest ? new Date(oldest.createdAt.getTime() + WINDOW_MS) : null,
+  };
 }
 
 export async function getRemaining(userId: string, now = new Date()): Promise<number> {
   return (await getQuotaState(userId, now)).remaining;
 }
 
-export async function consume(userId: string, params: ConsumeParams): Promise<void> {
-  await db.aiUsage.create({
-    data: {
-      userId,
-      feature: params.feature,
-      ok: params.ok,
-      inputTokens: params.inputTokens ?? 0,
-      outputTokens: params.outputTokens ?? 0,
-      model: params.model,
-      error: params.error,
-    },
+/**
+ * Atomically reserve one slot. Returns the AiUsage row id to pass to
+ * `finalize`, or null when the user has no slots left.
+ */
+export async function reserve(userId: string, feature: string, model: string | null): Promise<string | null> {
+  return db.$transaction(async (tx) => {
+    // Serialise concurrent reservations for this user inside the transaction.
+    // Released automatically when the transaction ends, including on failure.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+    const used = await tx.aiUsage.count({
+      where: { userId, createdAt: { gt: new Date(Date.now() - WINDOW_MS) } },
+    });
+    if (used >= DAILY_QUOTA) return null;
+    const row = await tx.aiUsage.create({ data: { userId, feature, ok: true, model } });
+    return row.id;
   });
+}
+
+/** Record the outcome of a reserved action. */
+export async function finalize(reservationId: string, result: FinalizeResult): Promise<void> {
+  await db.aiUsage.update({ where: { id: reservationId }, data: { ...result } });
 }
 
 /** Exhausted-quota error message with the honest reset time. */

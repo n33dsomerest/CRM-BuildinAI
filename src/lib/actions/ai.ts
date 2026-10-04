@@ -7,12 +7,12 @@ import { buildScoreLeadPrompt } from "@/lib/ai/prompts/score-lead";
 import { clampBatchSize, computeAverageOpenDealValue, computeWinRate } from "@/lib/ai/scoring";
 import { getRemaining } from "@/lib/ai/quota";
 import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
-import { consume, exhaustionMessage, getQuotaState } from "@/lib/ai/quota";
+import { exhaustionMessage, finalize, reserve } from "@/lib/ai/quota";
 import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
 import { diffChanges, recordAudit } from "@/lib/audit";
-import { isOwnedRecord } from "@/lib/authorize";
+import { ownerFilter } from "@/lib/scope";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/log";
 import { requireAuth } from "@/lib/session";
@@ -26,8 +26,9 @@ import { z } from "zod";
  * the user edits the fields and saves through the existing `addActivity`
  * action, which carries the normal scoping, validation and audit path.
  *
- * Flow: config check -> input validation -> cache (free) -> quota check ->
- * provider call (every attempt consumed) -> strict output validation -> cache set.
+ * Flow: config check -> input validation -> cache (free) -> atomic quota
+ * reservation -> provider call -> strict output validation -> cache set.
+ * One user action is one quota slot regardless of internal retries.
  */
 
 export interface SummaryDraft {
@@ -37,6 +38,12 @@ export interface SummaryDraft {
   suggestedTask?: string;
   /** True when the note exceeded the hard cap - surfaced in the UI, never silent. */
   truncated: boolean;
+}
+
+/** Coarse class from the provider's thrown message - never prompt/completion text. */
+function providerErrorClass(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return /AI upstream error \(([^)]+)\)/.exec(message)?.[1] ?? "unknown";
 }
 
 const summarizeInputSchema = z.object({
@@ -59,10 +66,8 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
   const cached = await getCached<SummaryDraft>(key);
   if (cached) return ok({ ...cached, truncated: cached.truncated ?? false });
 
-  const state = await getQuotaState(session.user.id);
-  if (state.exhausted) {
-    return fail(await exhaustionMessage(session.user.id));
-  }
+  const reservationId = await reserve(session.user.id, "summarize", config.cheapModel);
+  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt, truncated } = buildSummarizePrompt(body);
   const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: config.cheapModel });
@@ -75,23 +80,15 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
       json: true,
       maxOutputTokens: 700,
       model: config.cheapModel,
-      onAttempt: ({ failed, errorClass }) => {
-        // Failed attempts (incl. retries) count against quota - recorded here.
-        if (failed) {
-          void consume(session.user.id, { feature: "summarize", ok: false, error: errorClass, model: config.cheapModel });
-        }
-      },
     });
   } catch (error) {
+    const errorClass = providerErrorClass(error);
+    await finalize(reservationId, { ok: false, error: errorClass, model: config.cheapModel });
     logError("summarizeActivityDraft", error);
-    return fail(
-      "AI request failed - every attempt still counts against your daily limit. Try again later."
-    );
+    return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
 
-  // Success attempt consumed here, where token usage is known.
-  await consume(session.user.id, {
-    feature: "summarize",
+  await finalize(reservationId, {
     ok: true,
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
@@ -140,7 +137,7 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
 
   // Cross-scope protection: a SALES user cannot draft for another rep's contact.
   const contact = await db.contact.findFirst({
-    where: { id: contactId, ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }) },
+    where: { id: contactId, ...ownerFilter(session.user) },
     include: {
       account: { select: { name: true } },
       deals: {
@@ -168,8 +165,9 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const cached = await getCached<EmailDraft>(key);
   if (cached) return ok({ ...cached, aiGenerated: true });
 
-  const state = await getQuotaState(session.user.id);
-  if (state.exhausted) return fail(await exhaustionMessage(session.user.id));
+  const strongModel = modelFor("strong") ?? config.model;
+  const reservationId = await reserve(session.user.id, "draft", strongModel);
+  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt } = buildDraftEmailPrompt({
     contactName: contact.name,
@@ -184,7 +182,6 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     recentActivities: contact.activities.map((a) => ({ type: a.type, subject: a.subject })),
   });
 
-  const strongModel = modelFor("strong") ?? config.model;
   const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: strongModel });
 
   let completion;
@@ -194,19 +191,15 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
       prompt,
       json: true,
       maxOutputTokens: 800,
-      onAttempt: ({ failed, errorClass }) => {
-        if (failed) {
-          void consume(session.user.id, { feature: "draft", ok: false, error: errorClass, model: strongModel });
-        }
-      },
     });
   } catch (error) {
+    const errorClass = providerErrorClass(error);
+    await finalize(reservationId, { ok: false, error: errorClass, model: strongModel });
     logError("draftFollowUpEmail", error);
-    return fail("AI request failed - every attempt still counts against your daily limit. Try again later.");
+    return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
 
-  await consume(session.user.id, {
-    feature: "draft",
+  await finalize(reservationId, {
     ok: true,
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
@@ -245,6 +238,7 @@ export interface BatchScoreSummary {
   requested: number;
   scored: number;
   failed: number;
+  notAttempted: number;
 }
 
 /**
@@ -307,7 +301,7 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
   if (!config) return fail("AI is not configured");
 
   const lead = await db.lead.findFirst({
-    where: { id: leadId, ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }) },
+    where: { id: leadId, ...ownerFilter(session.user) },
   });
   if (!lead) return fail("Lead not found");
 
@@ -324,8 +318,9 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     return ok({ ...cached, leadId: lead.id });
   }
 
-  const state = await getQuotaState(session.user.id);
-  if (state.exhausted) return fail(await exhaustionMessage(session.user.id));
+  const cheapModel = modelFor("cheap") ?? config.model;
+  const reservationId = await reserve(session.user.id, "score", cheapModel);
+  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const agg = await teamAggregates(session.user.id);
   const { system, prompt } = buildScoreLeadPrompt({
@@ -345,7 +340,6 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     },
   });
 
-  const cheapModel = modelFor("cheap") ?? config.model;
   const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: cheapModel });
 
   let completion;
@@ -356,19 +350,15 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
       json: true,
       maxOutputTokens: 300,
       model: cheapModel,
-      onAttempt: ({ failed, errorClass }) => {
-        if (failed) {
-          void consume(session.user.id, { feature: "score", ok: false, error: errorClass, model: cheapModel });
-        }
-      },
     });
   } catch (error) {
+    const errorClass = providerErrorClass(error);
+    await finalize(reservationId, { ok: false, error: errorClass, model: cheapModel });
     logError("scoreLead", error);
-    return fail("AI request failed - every attempt still counts against your daily limit. Try again later.");
+    return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
 
-  await consume(session.user.id, {
-    feature: "score",
+  await finalize(reservationId, {
     ok: true,
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
@@ -401,11 +391,7 @@ export async function getLeadScoringBatchPreview(): Promise<ActionResult<BatchPr
   const session = await requireAuth();
   const remaining = await getRemaining(session.user.id);
   const eligible = await db.lead.count({
-    where: {
-      ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }),
-      score: null,
-      status: { in: ["NEW", "WORKING"] },
-    },
+    where: { ...ownerFilter(session.user), score: null, status: { in: ["NEW", "WORKING"] } },
   });
   return ok({ eligible, remaining, willScore: clampBatchSize(eligible, remaining) });
 }
@@ -424,11 +410,7 @@ export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>
   if (remaining === 0) return fail(await exhaustionMessage(session.user.id));
 
   const eligible = await db.lead.findMany({
-    where: {
-      ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }),
-      score: null,
-      status: { in: ["NEW", "WORKING"] },
-    },
+    where: { ...ownerFilter(session.user), score: null, status: { in: ["NEW", "WORKING"] } },
     orderBy: { createdAt: "asc" },
     take: clampBatchSize(50, remaining),
     select: { id: true },
@@ -436,10 +418,21 @@ export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>
 
   let scored = 0;
   let failed = 0;
+  let notAttempted = 0;
   for (const { id } of eligible) {
     const result = await scoreLead(id);
-    if (result.ok) scored += 1;
-    else failed += 1;
+    if (result.ok) {
+      scored += 1;
+      continue;
+    }
+    if (result.error?.startsWith("AI daily limit reached")) {
+      // Quota gone mid-batch (e.g. concurrent usage): stop instead of
+      // burning failed iterations - the rest are not-attempted, not failed.
+      notAttempted += 1;
+      break;
+    }
+    failed += 1;
   }
-  return ok({ requested: eligible.length, scored, failed });
+  notAttempted += eligible.length - scored - failed - notAttempted;
+  return ok({ requested: eligible.length, scored, failed, notAttempted });
 }

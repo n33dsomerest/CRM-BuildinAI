@@ -17,7 +17,8 @@
     "db:studio": "prisma studio",
     "pretest:integration": "npm run check:secrets && node scripts/migrate-test-db.mjs",
     "ai:check": "node scripts/ai-check.mjs",
-    "check:secrets": "node scripts/check-secrets.mjs"
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "ai:smoke": "node scripts/ai-smoke.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -40,21 +40,34 @@ npm run dev        # http://localhost:3000
 
 **Demo accounts** (from seed): `admin@crm.dev / Admin!2345` · `sarah@crm.dev / Sales!2345` · `david@crm.dev / Sales!2345`
 
-## AI features (OpenRouter)
+## AI features (KKU gateway)
 
-Set two variables in `.env` (and in Vercel's environment settings) - never commit them:
+The AI provider is an OpenAI-compatible gateway (default `https://gen.ai.kku.ac.th/okmd/api/v1`).
+Set these in `.env` (and in Vercel's environment settings) - never commit them:
 
 | Key | Purpose |
 | --- | --- |
-| `OPENROUTER_API_KEY` | Your key from https://openrouter.ai/keys |
-| `AI_MODEL` | Strong model for user-visible drafting (default `anthropic/claude-sonnet-4.5`) |
-| `AI_MODEL_CHEAP` | Cheap model for summarization/scoring (default `google/gemini-2.5-flash`) |
+| `AI_API_KEY` | Gateway key |
+| `AI_BASE_URL` | Gateway base URL (default: KKU gateway) |
+| `AI_MODEL` | Primary model (default `gemini-2.5-flash-lite`) |
+| `AI_MODEL_FALLBACKS` | Comma-separated fallback chain, tried in order |
+| `AI_TOKEN_BUDGETS` | JSON of per-model daily token budgets (input + output) |
 
-Then run `npm run ai:check` - it validates the key and confirms both models are reachable.
+Then run `npm run ai:check` - it probes EVERY model in the chain with a one-token
+completion so a bad fallback fails before deploy. Run `npm run ai:smoke` for the full
+manual smoke test (all three AI tasks, real prompts, real schemas) - it spends real
+quota and is deliberately not part of CI.
 
-**Quota:** every user gets 20 AI actions per rolling 24 hours. One click is one slot even if
-the provider needed retries; failures occupy the slot like successes. Cache hits are free.
-Token usage is recorded for cost visibility only.
+**Fallback chain:** the provider tries the primary, then falls back on rate limits,
+server errors, truncated reasoning output, or non-JSON responses. Auth/credit failures
+fail immediately (all models share the key).
+
+**Budgets:** per model per rolling 24 hours, measured in total tokens (input + output).
+A model absent from `AI_TOKEN_BUDGETS` has an unknown budget - it runs, but is not
+counted. One user action is one accounting row regardless of internal retries; cache
+hits consume nothing. The app never auto-writes to the CRM with AI: the summarizer and
+email drafts produce editable drafts, and scoring is a suggestion with reasons - a human
+confirms everything.
 The app never auto-writes to the CRM with AI: the summarizer and email drafts produce editable
 drafts, and scoring is a suggestion with reasons - a human confirms everything.
 

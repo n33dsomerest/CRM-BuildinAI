@@ -104,6 +104,11 @@ export const emailDraftSchema = z.object({
   body: z.string().min(1, "Body must not be empty").max(5000),
 });
 
+export const leadScoreSchema = z.object({
+  score: z.coerce.number().int().min(0, "Score must be 0-100").max(100, "Score must be 0-100"),
+  reason: z.string().min(10, "A score without reasons is worse than no score").max(500),
+});
+
 export const summarizeDraftSchema = z.object({
   summary: z.string().min(1, "Summary must not be empty").max(500),
   sentiment: z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "RISK"]),

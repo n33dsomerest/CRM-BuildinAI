@@ -3,6 +3,9 @@
 import { cacheKey, getCached, setCached } from "@/lib/ai/cache";
 import { getAiConfig, modelFor } from "@/lib/ai/config";
 import { buildDraftEmailPrompt } from "@/lib/ai/prompts/draft-email";
+import { buildScoreLeadPrompt } from "@/lib/ai/prompts/score-lead";
+import { clampBatchSize, computeAverageOpenDealValue, computeWinRate } from "@/lib/ai/scoring";
+import { getRemaining } from "@/lib/ai/quota";
 import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
 import { consume, exhaustionMessage, getQuotaState } from "@/lib/ai/quota";
 import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
@@ -11,7 +14,7 @@ import { isOwnedRecord } from "@/lib/authorize";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/log";
 import { requireAuth } from "@/lib/session";
-import { emailDraftSchema, summarizeDraftSchema } from "@/lib/validations";
+import { emailDraftSchema, leadScoreSchema, summarizeDraftSchema } from "@/lib/validations";
 import { z } from "zod";
 
 /**
@@ -222,4 +225,191 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const draft: EmailDraft = { subject: parsedOutput.data.subject, body: parsedOutput.data.body, aiGenerated: true };
   await setCached(key, "draft-email", { subject: draft.subject, body: draft.body });
   return ok(draft);
+}
+
+export interface LeadScoreResult {
+  leadId: string;
+  score: number;
+  reason: string;
+}
+
+export interface BatchPreview {
+  eligible: number;
+  remaining: number;
+  willScore: number;
+}
+
+export interface BatchScoreSummary {
+  requested: number;
+  scored: number;
+  failed: number;
+}
+
+/**
+ * Phase 3 - lead scoring. Cheap model: classification, not prose. Grounded in
+ * the user's OWN pipeline aggregates so scores are relative to this team.
+ * The explicit "Score" click is the human confirmation; the persisted fields
+ * are the suggestion itself (score + reasons), always displayed as such.
+ */
+async function teamAggregates(userId: string) {
+  const [won, lost, open] = await Promise.all([
+    db.deal.count({ where: { ownerId: userId, stage: { isWon: true } } }),
+    db.deal.count({ where: { ownerId: userId, stage: { isLost: true } } }),
+    db.deal.aggregate({
+      where: { ownerId: userId, stage: { isWon: false, isLost: false } },
+      _sum: { value: true },
+      _count: true,
+    }),
+  ]);
+  return {
+    won,
+    lost,
+    totalDeals: won + lost + open._count,
+    openValueSum: Number(open._sum.value ?? 0),
+    openCount: open._count,
+  };
+}
+
+export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreResult>> {
+  const session = await requireAuth();
+
+  const config = getAiConfig();
+  if (!config) return fail("AI is not configured");
+
+  const lead = await db.lead.findFirst({
+    where: { id: leadId, ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }) },
+  });
+  if (!lead) return fail("Lead not found");
+
+  const key = cacheKey("score-lead", { leadId, leadUpdatedAt: lead.updatedAt.toISOString() });
+  const cached = await getCached<LeadScoreResult>(key);
+  if (cached) {
+    await db.lead.update({
+      where: { id: lead.id },
+      data: { score: cached.score, scoreReason: cached.reason, scoredAt: new Date() },
+    });
+    return ok({ ...cached, leadId: lead.id });
+  }
+
+  const state = await getQuotaState(session.user.id);
+  if (state.exhausted) return fail(await exhaustionMessage(session.user.id));
+
+  const agg = await teamAggregates(session.user.id);
+  const { system, prompt } = buildScoreLeadPrompt({
+    lead: {
+      name: lead.name,
+      company: lead.company,
+      source: lead.source,
+      status: lead.status,
+      daysSinceCreated: Math.floor((Date.now() - lead.createdAt.getTime()) / 86_400_000),
+      hasEmail: Boolean(lead.email),
+      hasPhone: Boolean(lead.phone),
+    },
+    team: {
+      winRate: computeWinRate(agg),
+      averageOpenDealValue: computeAverageOpenDealValue(agg),
+      totalDeals: agg.totalDeals,
+    },
+  });
+
+  const cheapModel = modelFor("cheap") ?? config.model;
+  const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: cheapModel });
+
+  let completion;
+  try {
+    completion = await provider.complete({
+      system,
+      prompt,
+      json: true,
+      maxOutputTokens: 300,
+      model: cheapModel,
+      onAttempt: ({ failed, errorClass }) => {
+        if (failed) {
+          void consume(session.user.id, { feature: "score", ok: false, error: errorClass, model: cheapModel });
+        }
+      },
+    });
+  } catch (error) {
+    logError("scoreLead", error);
+    return fail("AI request failed - every attempt still counts against your daily limit. Try again later.");
+  }
+
+  await consume(session.user.id, {
+    feature: "score",
+    ok: true,
+    inputTokens: completion.inputTokens,
+    outputTokens: completion.outputTokens,
+    model: completion.model,
+  });
+
+  let parsedOutput;
+  try {
+    parsedOutput = leadScoreSchema.safeParse(JSON.parse(completion.text));
+  } catch {
+    return fail("AI returned malformed JSON - try again");
+  }
+  // Out-of-range scores or empty reasons are a FAILURE, never silently clamped.
+  if (!parsedOutput.success) {
+    return fail(`AI returned an invalid score - ${parsedOutput.error.issues[0]?.message ?? "try again"}`);
+  }
+
+  const result: LeadScoreResult = {
+    leadId: lead.id,
+    score: parsedOutput.data.score,
+    reason: parsedOutput.data.reason,
+  };
+  await setCached(key, "score-lead", { score: result.score, reason: result.reason });
+  await db.lead.update({
+    where: { id: lead.id },
+    data: { score: result.score, scoreReason: result.reason, scoredAt: new Date() },
+  });
+  return ok(result);
+}
+
+/** What the "Score all new leads" batch would do right now - shown before running. */
+export async function getLeadScoringBatchPreview(): Promise<ActionResult<BatchPreview>> {
+  const session = await requireAuth();
+  const remaining = await getRemaining(session.user.id);
+  const eligible = await db.lead.count({
+    where: {
+      ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }),
+      score: null,
+      status: { in: ["NEW", "WORKING"] },
+    },
+  });
+  return ok({ eligible, remaining, willScore: clampBatchSize(eligible, remaining) });
+}
+
+/**
+ * Batch scoring with the quota cap baked in: the batch is clamped to the
+ * remaining quota at execution time, so it can never half-run out of budget.
+ */
+export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>> {
+  const session = await requireAuth();
+
+  const config = getAiConfig();
+  if (!config) return fail("AI is not configured");
+
+  const remaining = await getRemaining(session.user.id);
+  if (remaining === 0) return fail(await exhaustionMessage(session.user.id));
+
+  const eligible = await db.lead.findMany({
+    where: {
+      ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }),
+      score: null,
+      status: { in: ["NEW", "WORKING"] },
+    },
+    orderBy: { createdAt: "asc" },
+    take: clampBatchSize(50, remaining),
+    select: { id: true },
+  });
+
+  let scored = 0;
+  let failed = 0;
+  for (const { id } of eligible) {
+    const result = await scoreLead(id);
+    if (result.ok) scored += 1;
+    else failed += 1;
+  }
+  return ok({ requested: eligible.length, scored, failed });
 }

@@ -1,5 +1,7 @@
 import { requireAuth } from "@/lib/session";
 import { getLeadsPage } from "@/lib/queries";
+import { getQuotaState } from "@/lib/ai/quota";
+import { isAiConfigured } from "@/lib/ai/config";
 import { PageHeader } from "@/components/page-header";
 import { LeadsTable } from "@/components/leads/leads-table";
 
@@ -17,7 +19,10 @@ export default async function LeadsPage({
   const status = typeof params.status === "string" ? params.status : undefined;
   const page = typeof params.page === "string" ? Number(params.page) : 1;
 
-  const data = await getLeadsPage({ id: session.user.id, role: session.user.role }, { search, status, page });
+  const [data, aiRemaining] = await Promise.all([
+    getLeadsPage({ id: session.user.id, role: session.user.role }, { search, status, page }),
+    getQuotaState(session.user.id).then((state) => state.remaining),
+  ]);
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -30,6 +35,8 @@ export default async function LeadsPage({
         search={search ?? ""}
         status={status ?? ""}
         currentUserId={session.user.id}
+        aiRemaining={aiRemaining}
+        aiConfigured={isAiConfigured()}
       />
     </div>
   );

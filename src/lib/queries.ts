@@ -100,6 +100,9 @@ export interface LeadRow {
   company: string | null;
   source: LeadSource;
   status: LeadStatus;
+  score: number | null;
+  scoreReason: string | null;
+  scoredAt: Date | null;
   ownerId: string;
   ownerName: string;
   createdAt: Date;
@@ -428,6 +431,9 @@ export async function getLeadsPage(user: ScopedUser, query: LeadQuery = {}): Pro
       company: l.company,
       source: l.source,
       status: l.status,
+      score: l.score,
+      scoreReason: l.scoreReason,
+      scoredAt: l.scoredAt,
       ownerId: l.ownerId,
       ownerName: l.owner.name,
       createdAt: l.createdAt,

@@ -129,17 +129,20 @@ model Contact {
 }
 
 model Lead {
-  id        String     @id @default(cuid())
-  name      String
-  email     String?
-  phone     String?
-  company   String?
-  source    LeadSource @default(WEB)
-  status    LeadStatus @default(NEW)
-  ownerId   String
-  owner     User       @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id          String     @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  company     String?
+  source      LeadSource @default(WEB)
+  status      LeadStatus @default(NEW)
+  score       Int? // 0-100, AI-suggested with reasons - never auto-applied
+  scoreReason String?
+  scoredAt    DateTime?
+  ownerId     String
+  owner       User       @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   @@index([status])
   @@index([ownerId])

@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
   EllipsisVertical,
+  Loader2,
   Pencil,
   Search,
+  Sparkles,
   Trash2,
   UserPlus,
 } from "lucide-react";
@@ -15,6 +17,8 @@ import type { LeadRow, Paged } from "@/lib/queries";
 import { deleteLead, updateLeadStatus } from "@/lib/actions/leads";
 import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { ConvertLeadDialog } from "@/components/leads/convert-lead-dialog";
+import { BatchScoreDialog } from "@/components/ai/batch-score-dialog";
+import { scoreLead } from "@/lib/actions/ai";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { LeadSourceLabel, LeadStatusBadge } from "@/components/badges";
 import { EmptyState } from "@/components/empty-state";
@@ -48,9 +52,11 @@ interface LeadsTableProps {
   search: string;
   status: string;
   currentUserId: string;
+  aiRemaining?: number;
+  aiConfigured?: boolean;
 }
 
-export function LeadsTable({ data, search, status, currentUserId }: LeadsTableProps) {
+export function LeadsTable({ data, search, status, currentUserId, aiRemaining, aiConfigured = false }: LeadsTableProps) {
   const leads = data.rows;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -61,6 +67,7 @@ export function LeadsTable({ data, search, status, currentUserId }: LeadsTablePr
   const [converting, setConverting] = React.useState<LeadRow | null>(null);
   const [deleting, setDeleting] = React.useState<LeadRow | null>(null);
   const [pendingDelete, startDelete] = React.useTransition();
+  const [pendingScoring, startScoring] = React.useTransition();
 
   const pushParams = (updates: Record<string, string | undefined>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -114,15 +121,19 @@ export function LeadsTable({ data, search, status, currentUserId }: LeadsTablePr
           </SelectContent>
         </Select>
 
-        <Button
-          className="ml-auto"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <UserPlus className="size-4" /> New lead
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {aiConfigured ? (
+            <BatchScoreDialog aiConfigured={aiConfigured} onScored={() => router.refresh()} />
+          ) : null}
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <UserPlus className="size-4" /> New lead
+          </Button>
+        </div>
       </div>
 
       {leads.length === 0 ? (
@@ -149,6 +160,7 @@ export function LeadsTable({ data, search, status, currentUserId }: LeadsTablePr
                 <TableHead>Lead</TableHead>
                 <TableHead className="hidden md:table-cell">Source</TableHead>
                 <TableHead>Status</TableHead>
+                {aiConfigured ? <TableHead className="w-24">AI score</TableHead> : null}
                 <TableHead className="hidden lg:table-cell">Owner</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
@@ -182,6 +194,43 @@ export function LeadsTable({ data, search, status, currentUserId }: LeadsTablePr
                       </SelectContent>
                     </Select>
                   </TableCell>
+                  {aiConfigured ? (
+                    <TableCell>
+                      {lead.score !== null ? (
+                        <span
+                          className="inline-flex size-8 items-center justify-center rounded-full border text-xs font-semibold tabular-nums"
+                          title={lead.scoreReason ?? "AI suggestion"}
+                        >
+                          {lead.score}
+                        </span>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={(aiRemaining ?? 0) <= 0}
+                          title={(aiRemaining ?? 0) <= 0 ? "Daily AI limit reached" : "Score with AI (1 request)"}
+                          onClick={() => {
+                            startScoring(async () => {
+                              const result = await scoreLead(lead.id);
+                              if (result.ok) {
+                                toast.success(`${lead.name}: ${result.data.score} - ${result.data.reason}`);
+                                router.refresh();
+                              } else {
+                                toast.error(result.error);
+                              }
+                            });
+                          }}
+                        >
+                          {pendingScoring ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="size-4" />
+                          )}
+                          Score
+                        </Button>
+                      )}
+                    </TableCell>
+                  ) : null}
                   <TableCell className="hidden lg:table-cell">
                     <Badge variant="outline">{lead.ownerName}</Badge>
                   </TableCell>

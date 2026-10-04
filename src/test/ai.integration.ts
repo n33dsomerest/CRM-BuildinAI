@@ -26,6 +26,13 @@ const fakeCompletion = {
   outputTokens: 50,
 };
 
+const fakeScoreCompletion = {
+  text: JSON.stringify({ score: 82, reason: "Referral source with complete contact data, fits the team baseline" }),
+  model: "vendor/cheap",
+  inputTokens: 60,
+  outputTokens: 30,
+};
+
 const fakeEmailCompletion = {
   text: JSON.stringify({
     subject: "Following up on our conversation",
@@ -36,9 +43,12 @@ const fakeEmailCompletion = {
   outputTokens: 80,
 };
 
-/** Branches on the prompt shape: draft feature -> email JSON, else summary JSON. */
-const completeBranch = async (req: { system: string; prompt: string }) =>
-  req.prompt.includes("Draft a short follow-up email") ? fakeEmailCompletion : fakeCompletion;
+/** Branches on the prompt shape: draft -> email JSON, score -> score JSON, else summary JSON. */
+const completeBranch = async (req: { system: string; prompt: string }) => {
+  if (req.prompt.includes("Draft a short follow-up email")) return fakeEmailCompletion;
+  if (req.prompt.includes("Score this lead")) return fakeScoreCompletion;
+  return fakeCompletion;
+};
 
 const providerStub = { complete: vi.fn(completeBranch) };
 
@@ -56,7 +66,8 @@ vi.mock("@/lib/session", () => ({
 }));
 
 import { requireAuth } from "@/lib/session";
-import { draftFollowUpEmail, summarizeActivityDraft } from "@/lib/actions/ai";
+import { draftFollowUpEmail, scoreLead, scoreLeadsBatch, summarizeActivityDraft } from "@/lib/actions/ai";
+import { getLeadScoringBatchPreview } from "@/lib/actions/ai";
 
 const asUser = (u: { id: string; role: "ADMIN" | "SALES" }) =>
   vi.mocked(requireAuth).mockResolvedValue({ user: u } as never);
@@ -215,5 +226,130 @@ describe("draftFollowUpEmail (integration - copy-only, scoped, quota-aware)", ()
     const result = await draftFollowUpEmail(contact.id);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/resets in \d+h \d+m/);
+  });
+});
+
+describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
+  let owner: { id: string };
+  let stranger: { id: string };
+  let lead: { id: string; name: string };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    providerStub.complete.mockImplementation(completeBranch);
+    asUser({ id: "fixture", role: "SALES" });
+
+    owner = await prisma.user.create({
+      data: { email: "score-owner@test.com", name: "Owner", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    stranger = await prisma.user.create({
+      data: { email: "score-stranger@test.com", name: "Stranger", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    lead = await prisma.lead.create({
+      data: {
+        name: "Scorable Lead", company: "Fit Co", source: "REFERRAL", status: "NEW", ownerId: owner.id,
+      },
+    });
+
+    // Pipeline baseline so the aggregates have something to chew on
+    const scoreAccount = await prisma.account.create({ data: { name: "Score Co", ownerId: owner.id } });
+    const scoreContact = await prisma.contact.create({
+      data: { name: "Score Contact", email: "contact@scoreco.test", status: "PROSPECT", accountId: scoreAccount.id, ownerId: owner.id },
+    });
+    const wonStage = await prisma.stage.create({ data: { name: "Won", order: 5, probability: 100, isWon: true, isLost: false } });
+    await prisma.deal.create({
+      data: { title: "Closed deal", value: 40000, stageId: wonStage.id, accountId: scoreAccount.id, contactId: scoreContact.id, ownerId: owner.id },
+    });
+    asUser({ id: owner.id, role: "SALES" });
+  });
+
+  it("persists score and reason from the explicit Score click", async () => {
+    const result = await scoreLead(lead.id);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (result.ok) {
+      expect(result.data.score).toBe(82);
+      expect(result.data.reason).toContain("Referral");
+    }
+
+    const updated = await prisma.lead.findUnique({ where: { id: lead.id } });
+    expect(updated?.score).toBe(82);
+    expect(updated?.scoreReason).toContain("Referral");
+    expect(updated?.scoredAt).not.toBeNull();
+  });
+
+  it("SALES cannot score another user's lead", async () => {
+    asUser({ id: stranger.id, role: "SALES" });
+    const result = await scoreLead(lead.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("Lead not found");
+    const untouched = await prisma.lead.findUnique({ where: { id: lead.id } });
+    expect(untouched?.score).toBeNull();
+  });
+
+  it("quota applies - the 21st scoring request is refused", async () => {
+    const now = Date.now();
+    await prisma.aiUsage.createMany({
+      data: Array.from({ length: 20 }, (_, i) => ({
+        userId: owner.id,
+        feature: "score",
+        ok: true,
+        createdAt: new Date(now - (i + 1) * 60_000),
+      })),
+    });
+    const result = await scoreLead(lead.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/resets in \d+h \d+m/);
+  });
+
+  it("batch preview caps at remaining quota", async () => {
+    // 3 eligible leads, only 2 requests remaining
+    for (let i = 0; i < 2; i++) {
+      await prisma.lead.create({
+        data: { name: `Extra ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
+      });
+    }
+    await prisma.aiUsage.createMany({
+      data: Array.from({ length: 18 }, (_, i) => ({
+        userId: owner.id,
+        feature: "score",
+        ok: true,
+        createdAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    });
+
+    const preview = await getLeadScoringBatchPreview();
+    expect(preview.ok).toBe(true);
+    if (preview.ok) {
+      expect(preview.data.eligible).toBe(3);
+      expect(preview.data.remaining).toBe(2);
+      expect(preview.data.willScore).toBe(2);
+    }
+  });
+
+  it("batch scoring stops cleanly and only scores the capped number", async () => {
+    for (let i = 0; i < 2; i++) {
+      await prisma.lead.create({
+        data: { name: `Extra ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
+      });
+    }
+    // 19 used -> only 1 slot left; 3 eligible leads
+    await prisma.aiUsage.createMany({
+      data: Array.from({ length: 19 }, (_, i) => ({
+        userId: owner.id,
+        feature: "score",
+        ok: true,
+        createdAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    });
+
+    const result = await scoreLeadsBatch();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.requested).toBe(1);
+      expect(result.data.scored).toBe(1);
+    }
+    // exactly one lead got scored
+    const scored = await prisma.lead.count({ where: { ownerId: owner.id, score: { not: null } } });
+    expect(scored).toBe(1);
   });
 });

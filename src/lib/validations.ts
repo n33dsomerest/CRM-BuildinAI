@@ -91,6 +91,19 @@ export const activitySchema = z.object({
   type: z.enum(["NOTE", "CALL", "MEETING", "EMAIL"]),
   subject: z.string().min(2, "Subject is required").max(120),
   body: optionalText(2000),
+  // AI-assisted fields: proposed by the summarizer, edited and confirmed by a human
+  summary: optionalText(500),
+  sentiment: z.preprocess(emptyToUndefined, z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "RISK"]).optional()),
+  aiGenerated: z.coerce.boolean().optional(),
+});
+
+/* -- AI feature schemas (validated model output; never trust raw completions) -- */
+
+export const summarizeDraftSchema = z.object({
+  summary: z.string().min(1, "Summary must not be empty").max(500),
+  sentiment: z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "RISK"]),
+  nextStep: optionalText(300),
+  suggestedTask: optionalText(200),
 });
 
 /* ── Tasks ───────────────────────────────────────────────────────────────── */

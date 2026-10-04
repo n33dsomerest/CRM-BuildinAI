@@ -15,7 +15,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:prune-audit": "tsx prisma/retention.ts",
     "db:studio": "prisma studio",
-    "pretest:integration": "npm run check:secrets",
+    "pretest:integration": "npm run check:secrets && node scripts/migrate-test-db.mjs",
     "ai:check": "node scripts/ai-check.mjs",
     "check:secrets": "node scripts/check-secrets.mjs"
   },

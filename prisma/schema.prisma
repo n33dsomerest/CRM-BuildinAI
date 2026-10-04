@@ -184,17 +184,20 @@ model Deal {
 }
 
 model Activity {
-  id         String       @id @default(cuid())
-  type       ActivityType
-  subject    String
-  body       String?
-  contactId  String
-  contact    Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  dealId     String?
-  deal       Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  userId     String
-  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  occurredAt DateTime     @default(now())
+  id          String       @id @default(cuid())
+  type        ActivityType
+  subject     String
+  body        String?
+  summary     String?
+  sentiment   String? // POSITIVE | NEUTRAL | NEGATIVE | RISK (AI-assisted, human-confirmed)
+  aiGenerated Boolean      @default(false)
+  contactId   String
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId      String?
+  deal        Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  occurredAt  DateTime     @default(now())
 
   @@index([contactId, occurredAt])
   @@index([dealId])

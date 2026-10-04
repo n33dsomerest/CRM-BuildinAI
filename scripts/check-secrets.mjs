@@ -27,9 +27,16 @@ try {
   process.exit(0);
 }
 
+// Test files contain synthetic credential-shaped fixtures BY DESIGN (mock API
+// keys); a match there is a false positive, not a leak. Real secrets must
+// never be committed anywhere - including tests - but the scan targets app
+// code and config where a real key would actually appear.
+const isTestFile = (file) => /(^|\/)src\/test\//.test(file) || /\.test\.ts$/.test(file) || /\.integration\.ts$/.test(file);
+
 const violations = [];
 for (const file of tracked) {
   if (/\.(png|jpg|jpeg|gif|webp|ico|woff2?|pdf)$/.test(file)) continue;
+  if (isTestFile(file)) continue;
   let content;
   try {
     content = execSync(`git show HEAD:${JSON.stringify(file)}`, {

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Building2, Mail, MapPin, Phone, Trophy } from "lucide-react";
+import { ArrowLeft, Building2, Mail, MapPin, Phone, Trophy, Wand2 } from "lucide-react";
 import { requireAuth } from "@/lib/session";
 import { getContactDetail } from "@/lib/queries";
+import { getQuotaState } from "@/lib/ai/quota";
+import { isAiConfigured } from "@/lib/ai/config";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { ContactStatusBadge } from "@/components/badges";
 import { ActivityForm } from "@/components/activities/activity-form";
@@ -30,6 +32,7 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const contact = await getContactDetail({ id: session.user.id, role: session.user.role }, id);
   if (!contact) notFound();
+  const aiRemaining = (await getQuotaState(session.user.id)).remaining;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -145,6 +148,8 @@ export default async function ContactDetailPage({
               <ActivityForm
                 contactId={contact.id}
                 deals={contact.deals.map((deal) => ({ id: deal.id, title: deal.title }))}
+                aiRemaining={aiRemaining}
+                aiConfigured={isAiConfigured()}
               />
             </CardContent>
           </Card>
@@ -171,6 +176,27 @@ export default async function ContactDetailPage({
                         <p className="text-sm font-medium">{activity.subject}</p>
                       </div>
                       {activity.body ? <p className="mt-1 text-sm text-muted-foreground">{activity.body}</p> : null}
+                      {activity.summary ? (
+                        <p className="mt-1 rounded-md bg-muted/60 px-2 py-1 text-sm">
+                          <span className="mr-1.5 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            <Wand2 className="size-3" /> AI
+                          </span>
+                          {activity.summary}
+                        </p>
+                      ) : null}
+                      {activity.sentiment ? (
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            "mt-1 border-transparent",
+                            activity.sentiment === "POSITIVE" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+                            activity.sentiment === "NEGATIVE" && "bg-red-500/15 text-red-700 dark:text-red-400",
+                            activity.sentiment === "RISK" && "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                          )}
+                        >
+                          {activity.sentiment.toLowerCase()}
+                        </Badge>
+                      ) : null}
                       <p className="mt-1 text-xs text-muted-foreground">
                         {activity.userName} · {formatDateTime(activity.occurredAt)}
                         {activity.dealTitle ? ` · ${activity.dealTitle}` : ""}

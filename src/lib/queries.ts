@@ -69,6 +69,8 @@ export interface ActivityRow {
   type: ActivityType;
   subject: string;
   body: string | null;
+  summary: string | null;
+  sentiment: string | null;
   occurredAt: Date;
   userName: string;
   dealTitle: string | null;
@@ -688,6 +690,8 @@ type ActivityWithRelations = {
   type: ActivityType;
   subject: string;
   body: string | null;
+  summary: string | null;
+  sentiment: string | null;
   occurredAt: Date;
   contactId: string;
   user: { name: string };
@@ -700,6 +704,8 @@ function mapActivity(a: ActivityWithRelations): ActivityRow {
     type: a.type,
     subject: a.subject,
     body: a.body,
+    summary: a.summary,
+    sentiment: a.sentiment,
     occurredAt: a.occurredAt,
     userName: a.user.name,
     dealTitle: a.deal?.title ?? null,

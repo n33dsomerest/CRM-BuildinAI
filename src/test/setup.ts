@@ -80,6 +80,8 @@ const prisma = new PrismaClient({
 });
 
 const orderedModels = [
+  "aiUsage",
+  "aiCache",
   "auditLog",
   "task",
   "activity",

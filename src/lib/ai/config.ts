@@ -13,6 +13,10 @@ export interface AiConfig {
   baseUrl: string;
   /** Ordered chain: [primary, ...fallbacks]. */
   models: string[];
+  /** Per-model daily token budgets, keyed by model id. A model absent from
+   *  the map has an UNKNOWN budget: allowed to run, not counted against any
+   *  limit - never invent a number for it. */
+  budgets: Map<string, number>;
 }
 
 export const DEFAULT_AI_BASE_URL = "https://gen.ai.kku.ac.th/okmd/api/v1";
@@ -27,7 +31,27 @@ export function getAiConfig(): AiConfig | null {
   const fallbacks = (process.env.AI_MODEL_FALLBACKS?.split(",") ?? [])
     .map((m) => m.trim())
     .filter(Boolean);
-  return { apiKey, baseUrl, models: [primary, ...fallbacks] };
+
+  // AI_TOKEN_BUDGETS is JSON keyed by model id, e.g.
+  // {"deepseek-v4-flash":180000,"gemini-2.5-flash-lite":30000}
+  // Malformed JSON is ignored (empty map) rather than breaking the app - the
+  // per-model budget gate then treats every model as unknown-budget.
+  const budgets = new Map<string, number>();
+  const rawBudgets = process.env.AI_TOKEN_BUDGETS?.trim();
+  if (rawBudgets) {
+    try {
+      const parsed = JSON.parse(rawBudgets) as Record<string, unknown>;
+      for (const [model, value] of Object.entries(parsed)) {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+          budgets.set(model, value);
+        }
+      }
+    } catch {
+      // malformed - leave the map empty
+    }
+  }
+
+  return { apiKey, baseUrl, models: [primary, ...fallbacks], budgets };
 }
 
 export function isAiConfigured(): boolean {

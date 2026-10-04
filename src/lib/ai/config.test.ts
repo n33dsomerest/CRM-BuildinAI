@@ -49,6 +49,7 @@ describe("getAiConfig", () => {
         apiKey: "gw-key",
         baseUrl: "https://gen.ai.kku.ac.th/okmd/api/v1",
         models: ["gemini-2.5-flash-lite"],
+        budgets: new Map(),
       });
     });
   });

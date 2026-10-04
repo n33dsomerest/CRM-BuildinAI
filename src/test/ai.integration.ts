@@ -9,6 +9,7 @@ vi.mock("@/lib/ai/config", () => ({
     apiKey: "gw-fake-key",
     baseUrl: "https://gateway.test/api/v1",
     models: ["vendor/primary", "vendor/fallback"],
+    budgets: new Map([["vendor/primary", 5000], ["vendor/fallback", 5000]]),
   })),
   isAiConfigured: () => true,
 }));
@@ -20,14 +21,14 @@ const fakeCompletion = {
     nextStep: "Send proposal",
     suggestedTask: "Send proposal to customer",
   }),
-  model: "vendor/cheap",
+  model: "vendor/primary",
   inputTokens: 100,
   outputTokens: 50,
 };
 
 const fakeScoreCompletion = {
   text: JSON.stringify({ score: 82, reason: "Referral source with complete contact data, fits the team baseline" }),
-  model: "vendor/cheap",
+  model: "vendor/primary",
   inputTokens: 60,
   outputTokens: 30,
 };
@@ -37,15 +38,28 @@ const fakeEmailCompletion = {
     subject: "Following up on our conversation",
     body: "Hi, checking in on the rollout timeline we discussed.",
   }),
-  model: "vendor/strong",
+  model: "vendor/primary",
   inputTokens: 120,
   outputTokens: 80,
 };
 
-/** Branches on the prompt shape: draft -> email JSON, score -> score JSON, else summary JSON. */
+/**
+ * Simulates the chain's model selection: the budget tests attribute usage via
+ * finalize, so the stub must report the model the chain WOULD pick - primary
+ * while it has budget left, otherwise the fallback. Budgets come from the
+ * config mock (5000 per model).
+ */
 const completeBranch = async (req: { system: string; prompt: string }) => {
   if (req.prompt.includes("Draft a short follow-up email")) return fakeEmailCompletion;
-  if (req.prompt.includes("Score this lead")) return fakeScoreCompletion;
+  if (req.prompt.includes("Score this lead")) {
+    const primaryRows = await prisma.aiUsage.findMany({
+      where: { model: "vendor/primary" },
+      select: { totalTokens: true },
+    });
+    const primaryUsed = primaryRows.reduce((sum, r) => sum + r.totalTokens, 0);
+    const model = primaryUsed < 5000 ? "vendor/primary" : "vendor/fallback";
+    return { ...fakeScoreCompletion, model };
+  }
   return fakeCompletion;
 };
 
@@ -270,57 +284,68 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
   });
 
 
-  it("batch preview caps at remaining quota", async () => {
-    // 3 eligible leads, only 2 requests remaining
+  it("batch preview reports eligible leads without a request-count cap", async () => {
     for (let i = 0; i < 2; i++) {
       await prisma.lead.create({
         data: { name: `Extra ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
       });
     }
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 18 }, (_, i) => ({
-        userId: owner.id,
-        feature: "score",
-        ok: true,
-        createdAt: new Date(Date.now() - (i + 1) * 60_000),
-      })),
-    });
 
     const preview = await getLeadScoringBatchPreview();
     expect(preview.ok).toBe(true);
     if (preview.ok) {
       expect(preview.data.eligible).toBe(3);
-      expect(preview.data.remaining).toBe(2);
-      expect(preview.data.willScore).toBe(2);
+      expect(preview.data.willScore).toBe(3);
     }
   });
 
-  it("batch scoring stops cleanly and only scores the capped number", async () => {
+  it("batch stops cleanly when every model's token budget runs out mid-run", async () => {
+    // One scoreLead call costs 90 totalTokens (60 in + 30 out from the stub).
+    // Seed both chain models at 4950/5000: each survives exactly ONE call.
+    for (const model of ["vendor/primary", "vendor/fallback"]) {
+      await prisma.aiUsage.create({
+        data: { userId: owner.id, feature: "score", ok: true, totalTokens: 4950, model },
+      });
+    }
     for (let i = 0; i < 2; i++) {
       await prisma.lead.create({
         data: { name: `Extra ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
       });
     }
-    // 19 used -> only 1 slot left; 3 eligible leads
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 19 }, (_, i) => ({
-        userId: owner.id,
-        feature: "score",
-        ok: true,
-        createdAt: new Date(Date.now() - (i + 1) * 60_000),
-      })),
-    });
-
+    // 3 eligible leads, combined budget survives exactly 2 calls
     const result = await scoreLeadsBatch();
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    const failures = result.ok
+      ? (result as { data: { failed: number } }).data.failed
+      : 0;
+    expect(failures, JSON.stringify(result)).toBe(0);
+    void failures;
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.requested).toBe(1);
-      expect(result.data.scored).toBe(1);
+      expect(result.data.requested).toBe(3);
+      expect(result.data.scored).toBe(2);
+      expect(result.data.failed).toBe(0);
+      expect(result.data.notAttempted).toBe(1);
     }
-    // exactly one lead got scored
     const scored = await prisma.lead.count({ where: { ownerId: owner.id, score: { not: null } } });
-    expect(scored).toBe(1);
+    expect(scored).toBe(2);
   });
+
+  it("a single scoreLead fails cleanly when both chain models are out of budget", async () => {
+    for (const model of ["vendor/primary", "vendor/fallback"]) {
+      await prisma.aiUsage.create({
+        data: { userId: owner.id, feature: "score", ok: true, totalTokens: 6000, model },
+      });
+    }
+    const result = await scoreLead(lead.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("token budget");
+      expect(result.error).toContain("all configured models");
+    }
+    expect(providerStub.complete).not.toHaveBeenCalled();
+  });
+
 });
 
 describe("quota reservation under concurrency (integration)", () => {

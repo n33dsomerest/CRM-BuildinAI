@@ -47,16 +47,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+interface AiBudgetInfo {
+  model: string;
+  unknown: boolean;
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
 interface LeadsTableProps {
   data: Paged<LeadRow>;
   search: string;
   status: string;
   currentUserId: string;
-  aiRemaining?: number;
+  aiBudget?: AiBudgetInfo | null;
   aiConfigured?: boolean;
 }
 
-export function LeadsTable({ data, search, status, currentUserId, aiRemaining, aiConfigured = false }: LeadsTableProps) {
+export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiConfigured = false }: LeadsTableProps) {
   const leads = data.rows;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -207,8 +215,12 @@ export function LeadsTable({ data, search, status, currentUserId, aiRemaining, a
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={(aiRemaining ?? 0) <= 0}
-                          title={(aiRemaining ?? 0) <= 0 ? "Daily AI limit reached" : "Score with AI (1 request)"}
+                          disabled={!!aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0}
+                          title={
+                            aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0
+                              ? "Daily token budget reached"
+                              : "Score with AI"
+                          }
                           onClick={() => {
                             startScoring(async () => {
                               const result = await scoreLead(lead.id);

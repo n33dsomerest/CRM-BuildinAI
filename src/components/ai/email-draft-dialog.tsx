@@ -18,10 +18,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+interface AiBudgetInfo {
+  model: string;
+  unknown: boolean;
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
 interface EmailDraftDialogProps {
   contactId: string;
   contactName: string;
-  remaining?: number;
+  aiBudget?: AiBudgetInfo | null;
   aiConfigured?: boolean;
 }
 
@@ -30,14 +38,14 @@ interface EmailDraftDialogProps {
  * nothing else. No send button, no mailto, no SMTP - the user pastes the text
  * into their own mail client.
  */
-export function EmailDraftDialog({ contactId, contactName, remaining, aiConfigured = false }: EmailDraftDialogProps) {
+export function EmailDraftDialog({ contactId, contactName, aiBudget, aiConfigured = false }: EmailDraftDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [subject, setSubject] = React.useState("");
   const [body, setBody] = React.useState("");
   const [copied, setCopied] = React.useState<"subject" | "body" | null>(null);
 
-  const exhausted = remaining !== undefined && remaining <= 0;
+  const exhausted = !!aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0;
 
   const draft = async () => {
     setPending(true);

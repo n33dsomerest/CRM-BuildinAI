@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Building2, Mail, MapPin, Phone, Trophy, Wand2 } from "lucide-react";
 import { requireAuth } from "@/lib/session";
 import { getContactDetail } from "@/lib/queries";
-import { getQuotaState } from "@/lib/ai/quota";
+import { getPrimaryModelBudget } from "@/lib/ai/quota";
+import { getAiConfig } from "@/lib/ai/config";
 import { isAiConfigured } from "@/lib/ai/config";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { ContactStatusBadge } from "@/components/badges";
@@ -33,7 +34,10 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const contact = await getContactDetail({ id: session.user.id, role: session.user.role }, id);
   if (!contact) notFound();
-  const aiRemaining = (await getQuotaState(session.user.id)).remaining;
+  const aiConfig = getAiConfig();
+  const primaryBudget = aiConfig
+    ? await getPrimaryModelBudget(session.user.id, aiConfig.models[0], aiConfig.budgets)
+    : null;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -60,7 +64,7 @@ export default async function ContactDetailPage({
         <EmailDraftDialog
           contactId={contact.id}
           contactName={contact.name}
-          remaining={aiRemaining}
+          aiBudget={primaryBudget}
           aiConfigured={isAiConfigured()}
         />
       </div>
@@ -155,7 +159,7 @@ export default async function ContactDetailPage({
               <ActivityForm
                 contactId={contact.id}
                 deals={contact.deals.map((deal) => ({ id: deal.id, title: deal.title }))}
-                aiRemaining={aiRemaining}
+                aiBudget={primaryBudget}
                 aiConfigured={isAiConfigured()}
               />
             </CardContent>

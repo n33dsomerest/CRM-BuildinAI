@@ -32,16 +32,24 @@ export interface ActivityFormValues {
   sentiment: string;
 }
 
+interface AiBudgetInfo {
+  model: string;
+  unknown: boolean;
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
 interface ActivityFormProps {
   contactId: string;
   deals: { id: string; title: string }[];
-  /** Remaining daily AI requests - 0 disables the Summarize button. */
-  aiRemaining?: number;
-  /** True when AI is unconfigured (no OPENROUTER_API_KEY) - hides AI affordances. */
+  /** Primary model's token budget state - exhausted/unknown disables Summarize. */
+  aiBudget?: AiBudgetInfo | null;
+  /** True when AI is unconfigured (no API key) - hides AI affordances. */
   aiConfigured?: boolean;
 }
 
-export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = false }: ActivityFormProps) {
+export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false }: ActivityFormProps) {
   const router = useRouter();
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [truncated, setTruncated] = React.useState(false);
@@ -90,7 +98,8 @@ export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = fal
     }
   });
 
-  const canSummarize = aiConfigured && (body?.trim().length ?? 0) >= 20 && (aiRemaining ?? 0) > 0;
+  const budgetExhausted = aiBudget !== undefined && aiBudget !== null && !aiBudget.unknown && aiBudget.remaining <= 0;
+  const canSummarize = aiConfigured && (body?.trim().length ?? 0) >= 20 && !budgetExhausted;
 
   return (
     <form onSubmit={onSubmit} className="grid gap-4">
@@ -136,8 +145,15 @@ export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = fal
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
           <Label htmlFor="activity-body">Details</Label>
-          {aiConfigured ? (
-            <QuotaIndicator remaining={aiRemaining ?? 0} className="text-[11px]" />
+          {aiConfigured && aiBudget ? (
+            <QuotaIndicator
+              model={aiBudget.model}
+              used={aiBudget.used}
+              limit={aiBudget.limit}
+              remaining={aiBudget.remaining}
+              unknown={aiBudget.unknown}
+              className="text-[11px]"
+            />
           ) : null}
         </div>
         <Textarea
@@ -158,9 +174,9 @@ export function ActivityForm({ contactId, deals, aiRemaining, aiConfigured = fal
             disabled={!canSummarize || isSubmitting}
             aria-busy={false}
             title={
-              !aiRemaining || aiRemaining <= 0
-                ? "Daily AI limit reached - resets within 24h"
-                : "Summarize the details above with AI (uses 1 of your 20 daily requests)"
+              budgetExhausted
+                ? "Daily token budget reached - resets within 24h"
+                : "Summarize the details above with AI"
             }
           >
             <Wand2 className="size-4" />

@@ -156,6 +156,7 @@ export function createGatewayProvider(config: GatewayConfig, fetchImpl: typeof f
               provider: data.provider,
               inputTokens: data.usage?.prompt_tokens ?? 0,
               outputTokens: data.usage?.completion_tokens ?? 0,
+              remainingTokens: data.model_quota?.daily_remaining_tokens,
             };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

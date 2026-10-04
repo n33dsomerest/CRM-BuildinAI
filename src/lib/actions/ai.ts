@@ -5,9 +5,9 @@ import { getAiConfig } from "@/lib/ai/config";
 import { buildDraftEmailPrompt } from "@/lib/ai/prompts/draft-email";
 import { buildScoreLeadPrompt } from "@/lib/ai/prompts/score-lead";
 import { clampBatchSize, computeAverageOpenDealValue, computeWinRate } from "@/lib/ai/scoring";
-import { getRemaining } from "@/lib/ai/quota";
 import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
-import { exhaustionMessage, finalize, reserve } from "@/lib/ai/quota";
+import { allModelsExhaustedMessage, finalize, hasTokenBudget, reserve } from "@/lib/ai/quota";
+import { persistRemainingTokens, readRemainingTokens } from "@/lib/ai/gateway-quota";
 import { createGatewayProvider } from "@/lib/ai/provider-gateway";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
@@ -66,14 +66,22 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
   const cached = await getCached<SummaryDraft>(key);
   if (cached) return ok({ ...cached, truncated: cached.truncated ?? false });
 
+  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  if (budgetGate) return fail(budgetGate);
+
   const reservationId = await reserve(session.user.id, "summarize");
-  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt, truncated } = buildSummarizePrompt(body);
   // 2000 tokens of headroom: reasoning fallbacks in the chain (deepseek-v4-flash
   // measured 282-678 output tokens) need it; models that don't are charged on
   // actual usage, not on max_tokens.
-  const provider = createGatewayProvider(config);
+  const provider = createGatewayProvider({
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    models: config.models,
+    hasBudget: (model) => hasTokenBudget(session.user.id, model, config.budgets),
+    remainingTokens: (model) => readRemainingTokens(model),
+  });
 
   let completion;
   try {
@@ -85,7 +93,7 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
+    await finalize(reservationId, { ok: false, error: errorClass });
     logError("summarizeActivityDraft", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -97,6 +105,9 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
     model: completion.model,
     provider: completion.provider,
   });
+  if (completion.remainingTokens !== undefined) {
+    await persistRemainingTokens(completion.model, completion.remainingTokens);
+  }
 
   // Strict validation of the model output - never trust raw JSON.
   let parsedOutput;
@@ -168,8 +179,10 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const cached = await getCached<EmailDraft>(key);
   if (cached) return ok({ ...cached, aiGenerated: true });
 
+  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  if (budgetGate) return fail(budgetGate);
+
   const reservationId = await reserve(session.user.id, "draft");
-  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt } = buildDraftEmailPrompt({
     contactName: contact.name,
@@ -184,7 +197,13 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     recentActivities: contact.activities.map((a) => ({ type: a.type, subject: a.subject })),
   });
 
-  const provider = createGatewayProvider(config);
+  const provider = createGatewayProvider({
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    models: config.models,
+    hasBudget: (model) => hasTokenBudget(session.user.id, model, config.budgets),
+    remainingTokens: (model) => readRemainingTokens(model),
+  });
 
   let completion;
   try {
@@ -198,7 +217,7 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
+    await finalize(reservationId, { ok: false, error: errorClass });
     logError("draftFollowUpEmail", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -210,6 +229,9 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     model: completion.model,
     provider: completion.provider,
   });
+  if (completion.remainingTokens !== undefined) {
+    await persistRemainingTokens(completion.model, completion.remainingTokens);
+  }
 
   let parsedOutput;
   try {
@@ -235,7 +257,6 @@ export interface LeadScoreResult {
 
 export interface BatchPreview {
   eligible: number;
-  remaining: number;
   willScore: number;
 }
 
@@ -323,8 +344,10 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     return ok({ ...cached, leadId: lead.id });
   }
 
+  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  if (budgetGate) return fail(budgetGate);
+
   const reservationId = await reserve(session.user.id, "score");
-  if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const agg = await teamAggregates(session.user.id);
   const { system, prompt } = buildScoreLeadPrompt({
@@ -344,7 +367,13 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     },
   });
 
-  const provider = createGatewayProvider(config);
+  const provider = createGatewayProvider({
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    models: config.models,
+    hasBudget: (model) => hasTokenBudget(session.user.id, model, config.budgets),
+    remainingTokens: (model) => readRemainingTokens(model),
+  });
 
   let completion;
   try {
@@ -358,7 +387,7 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
+    await finalize(reservationId, { ok: false, error: errorClass });
     logError("scoreLead", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -370,6 +399,9 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     model: completion.model,
     provider: completion.provider,
   });
+  if (completion.remainingTokens !== undefined) {
+    await persistRemainingTokens(completion.model, completion.remainingTokens);
+  }
 
   let parsedOutput;
   try {
@@ -395,11 +427,10 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
 /** What the "Score all new leads" batch would do right now - shown before running. */
 export async function getLeadScoringBatchPreview(): Promise<ActionResult<BatchPreview>> {
   const session = await requireAuth();
-  const remaining = await getRemaining(session.user.id);
   const eligible = await db.lead.count({
     where: { ...ownerFilter(session.user), score: null, status: { in: ["NEW", "WORKING"] } },
   });
-  return ok({ eligible, remaining, willScore: clampBatchSize(eligible, remaining) });
+  return ok({ eligible, willScore: clampBatchSize(eligible, 50) });
 }
 
 /**
@@ -412,13 +443,10 @@ export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>
   const config = getAiConfig();
   if (!config) return fail("AI is not configured");
 
-  const remaining = await getRemaining(session.user.id);
-  if (remaining === 0) return fail(await exhaustionMessage(session.user.id));
-
   const eligible = await db.lead.findMany({
     where: { ...ownerFilter(session.user), score: null, status: { in: ["NEW", "WORKING"] } },
     orderBy: { createdAt: "asc" },
-    take: clampBatchSize(50, remaining),
+    take: 50,
     select: { id: true },
   });
 
@@ -431,8 +459,8 @@ export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>
       scored += 1;
       continue;
     }
-    if (result.error?.startsWith("AI daily limit reached")) {
-      // Quota gone mid-batch (e.g. concurrent usage): stop instead of
+    if (result.error?.startsWith("AI daily token budget reached")) {
+      // Budgets gone mid-batch (e.g. concurrent usage): stop instead of
       // burning failed iterations - the rest are not-attempted, not failed.
       notAttempted += 1;
       break;

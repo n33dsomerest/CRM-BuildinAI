@@ -27,6 +27,8 @@ export interface AiCompletion {
   provider?: string;
   inputTokens: number;
   outputTokens: number;
+  /** Gateway-reported daily remaining tokens for the serving model. */
+  remainingTokens?: number;
 }
 
 export interface AiProvider {

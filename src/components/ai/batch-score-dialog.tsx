@@ -4,7 +4,6 @@ import * as React from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { getLeadScoringBatchPreview, scoreLeadsBatch } from "@/lib/actions/ai";
-import { DAILY_QUOTA } from "@/lib/ai/quota-policy";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +22,11 @@ interface BatchScoreDialogProps {
   onScored: () => void;
 }
 
+interface BatchPreviewData {
+  eligible: number;
+  willScore: number;
+}
+
 /**
  * "Score all new leads" with the cost preview the plan requires: the dialog
  * shows exactly how many of the daily requests the batch will use (already
@@ -31,7 +35,7 @@ interface BatchScoreDialogProps {
  */
 export function BatchScoreDialog({ aiConfigured, onScored }: BatchScoreDialogProps) {
   const [open, setOpen] = React.useState(false);
-  const [preview, setPreview] = React.useState<{ eligible: number; remaining: number; willScore: number } | null>(null);
+  const [preview, setPreview] = React.useState<BatchPreviewData | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   const loadPreview = async () => {
@@ -80,16 +84,12 @@ export function BatchScoreDialog({ aiConfigured, onScored }: BatchScoreDialogPro
               ) : (
                 <>
                   <p>
-                    This will use{" "}
-                    <strong>
-                      {preview.willScore} of your {DAILY_QUOTA} daily requests
-                    </strong>
-                    .
+                    This will score <strong>{preview.willScore}</strong> of {preview.eligible} eligible lead(s).
                   </p>
                   <p className="text-xs">
-                    {preview.eligible} eligible lead(s) without a score; your remaining quota today is{" "}
-                    {preview.remaining}. The batch is capped at the remaining quota, so it never runs halfway
-                    out of budget. Scores are AI suggestions with reasons - always review them.
+                    Each score uses the first available model in the fallback chain and consumes that
+                    model&apos;s daily token budget. Scoring stops cleanly if every model&apos;s budget runs out.
+                    Scores are AI suggestions with reasons - always review them.
                   </p>
                 </>
               )}

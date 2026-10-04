@@ -1,52 +1,38 @@
 /**
  * Quota policy — pure functions, unit-tested without a database.
  *
- * Budget: 20 requests per user per day, counted by USER-INITIATED ACTION. One
- * action is one slot regardless of how many upstream HTTP attempts (incl.
- * retries) it needed — the reservation layer (quota.ts) guarantees this, so a
- * flaky provider cannot burn three slots for one click while a bug still
- * cannot loop indefinitely on someone else's budget. Failures occupy their
- * slot like successes do. Tokens are recorded for cost visibility, never
- * limited.
+ * Budget: token-based, PER MODEL. Each configured model carries a daily token
+ * budget (input + output, the unit gateway quotas are measured in) served from
+ * AI_TOKEN_BUDGETS. A model absent from the budget map has an unknown budget:
+ * allowed to run, not counted against any limit. Tokens are recorded for cost
+ * visibility as well; there is no request-count limit any more.
  *
  * Window: ROLLING 24 hours, not a calendar day. A calendar reset would hand
- * every user a fresh 20 at an arbitrary midnight hour; the rolling window
- * keeps the limit honest no matter when they work. Oldest entry in the window
- * determines when the next slot frees up — surfaced to the user in errors.
+ * every user a fresh budget at an arbitrary midnight hour; the rolling window
+ * keeps the limit honest no matter when they work.
+ *
+ * One user action is one AiUsage row and one concurrency slot regardless of
+ * how many upstream attempts the fallback chain needed (see quota.ts); the
+ * row's totalTokens are attributed to whichever model actually served it.
  */
 
-export const DAILY_QUOTA = 20;
 export const WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export interface QuotaAttempt {
-  createdAt: Date;
+export interface TokenBudgetEntry {
+  totalTokens: number;
 }
 
-export interface QuotaState {
+export interface TokenBudget {
+  limit: number;
   used: number;
   remaining: number;
   exhausted: boolean;
-  /** When the oldest attempt in the window ages out — null while slots remain. */
-  resetsAt: Date | null;
 }
 
-export function computeQuotaState(attempts: QuotaAttempt[], now: Date): QuotaState {
-  const windowStart = now.getTime() - WINDOW_MS;
-  const inWindow = attempts
-    .filter((a) => a.createdAt.getTime() > windowStart)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-  const used = inWindow.length;
-  const remaining = Math.max(0, DAILY_QUOTA - used);
-  const exhausted = remaining === 0;
-  const oldest = inWindow[0];
-
-  return {
-    used,
-    remaining,
-    exhausted,
-    resetsAt: exhausted && oldest ? new Date(oldest.createdAt.getTime() + WINDOW_MS) : null,
-  };
+export function computeTokenBudget(entries: TokenBudgetEntry[], limit: number): TokenBudget {
+  const used = entries.reduce((sum, e) => sum + e.totalTokens, 0);
+  const remaining = Math.max(0, limit - used);
+  return { limit, used, remaining, exhausted: remaining === 0 };
 }
 
 /** Human message for the exhausted case, e.g. "resets in 3h 12m". */
@@ -54,5 +40,5 @@ export function quotaExhaustedMessage(resetsAt: Date, now: Date): string {
   const ms = Math.max(0, resetsAt.getTime() - now.getTime());
   const hours = Math.floor(ms / 3_600_000);
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
-  return `AI daily limit reached (${DAILY_QUOTA}/day) — resets in ${hours}h ${minutes}m`;
+  return `AI daily token budget reached — resets in ${hours}h ${minutes}m`;
 }

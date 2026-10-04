@@ -1,14 +1,17 @@
 "use server";
 
 import { cacheKey, getCached, setCached } from "@/lib/ai/cache";
-import { getAiConfig } from "@/lib/ai/config";
+import { getAiConfig, modelFor } from "@/lib/ai/config";
+import { buildDraftEmailPrompt } from "@/lib/ai/prompts/draft-email";
 import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
 import { consume, exhaustionMessage, getQuotaState } from "@/lib/ai/quota";
 import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { isOwnedRecord } from "@/lib/authorize";
+import { db } from "@/lib/db";
 import { logError } from "@/lib/log";
 import { requireAuth } from "@/lib/session";
-import { summarizeDraftSchema } from "@/lib/validations";
+import { emailDraftSchema, summarizeDraftSchema } from "@/lib/validations";
 import { z } from "zod";
 
 /**
@@ -104,5 +107,119 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
 
   const draft: SummaryDraft = { ...parsedOutput.data, truncated };
   await setCached(key, "summarize", { ...parsedOutput.data, truncated });
+  return ok(draft);
+}
+
+export interface EmailDraft {
+  subject: string;
+  body: string;
+  /** Always true - the draft is labelled so nobody pastes it unread. */
+  aiGenerated: true;
+}
+
+/**
+ * Phase 2 - follow-up email DRAFT. Copy-only: the app has no send path, no
+ * SMTP, no provider send API. The user edits the text and sends from their
+ * own mail client.
+ *
+ * Grounding (structured DATA, never instructions): contact name/position/
+ * company, open deals with stage and value, the last three activity subjects.
+ * Cache key includes the grounding fingerprints, so any change to the contact,
+ * its deals or activities produces a fresh key instead of a stale draft.
+ */
+export async function draftFollowUpEmail(contactId: string): Promise<ActionResult<EmailDraft>> {
+  const session = await requireAuth();
+
+  const config = getAiConfig();
+  if (!config) return fail("AI is not configured");
+
+  // Cross-scope protection: a SALES user cannot draft for another rep's contact.
+  const contact = await db.contact.findFirst({
+    where: { id: contactId, ...(session.user.role === "ADMIN" ? {} : { ownerId: session.user.id }) },
+    include: {
+      account: { select: { name: true } },
+      deals: {
+        where: { stage: { isWon: false, isLost: false } },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { stage: { select: { name: true, probability: true } } },
+      },
+      activities: {
+        orderBy: { occurredAt: "desc" },
+        take: 3,
+        select: { type: true, subject: true, occurredAt: true },
+      },
+    },
+  });
+  if (!contact) return fail("Contact not found");
+
+  const groundingFingerprint = {
+    contactUpdatedAt: contact.updatedAt.toISOString(),
+    dealCount: contact.deals.length,
+    dealTitles: contact.deals.map((d) => d.title),
+    latestActivityAt: contact.activities[0]?.occurredAt.toISOString() ?? "none",
+  };
+  const key = cacheKey("draft-email", { contactId, groundingFingerprint });
+  const cached = await getCached<EmailDraft>(key);
+  if (cached) return ok({ ...cached, aiGenerated: true });
+
+  const state = await getQuotaState(session.user.id);
+  if (state.exhausted) return fail(await exhaustionMessage(session.user.id));
+
+  const { system, prompt } = buildDraftEmailPrompt({
+    contactName: contact.name,
+    position: contact.position,
+    companyName: contact.account.name,
+    openDeals: contact.deals.map((d) => ({
+      title: d.title,
+      stageName: d.stage.name,
+      value: String(d.value),
+      probability: d.stage.probability,
+    })),
+    recentActivities: contact.activities.map((a) => ({ type: a.type, subject: a.subject })),
+  });
+
+  const strongModel = modelFor("strong") ?? config.model;
+  const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: strongModel });
+
+  let completion;
+  try {
+    completion = await provider.complete({
+      system,
+      prompt,
+      json: true,
+      maxOutputTokens: 800,
+      onAttempt: ({ failed, errorClass }) => {
+        if (failed) {
+          void consume(session.user.id, { feature: "draft", ok: false, error: errorClass, model: strongModel });
+        }
+      },
+    });
+  } catch (error) {
+    logError("draftFollowUpEmail", error);
+    return fail("AI request failed - every attempt still counts against your daily limit. Try again later.");
+  }
+
+  await consume(session.user.id, {
+    feature: "draft",
+    ok: true,
+    inputTokens: completion.inputTokens,
+    outputTokens: completion.outputTokens,
+    model: completion.model,
+  });
+
+  let parsedOutput;
+  try {
+    parsedOutput = emailDraftSchema.safeParse(JSON.parse(completion.text));
+  } catch {
+    return fail("AI returned malformed JSON - try again");
+  }
+  if (!parsedOutput.success) {
+    logError("draftFollowUpEmail", new Error(parsedOutput.error.issues[0]?.message));
+    return fail("AI returned an unexpected response shape - try again");
+  }
+
+  const draft: EmailDraft = { subject: parsedOutput.data.subject, body: parsedOutput.data.body, aiGenerated: true };
+  await setCached(key, "draft-email", { subject: draft.subject, body: draft.body });
   return ok(draft);
 }

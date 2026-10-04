@@ -99,6 +99,11 @@ export const activitySchema = z.object({
 
 /* -- AI feature schemas (validated model output; never trust raw completions) -- */
 
+export const emailDraftSchema = z.object({
+  subject: z.string().min(1, "Subject must not be empty").max(200),
+  body: z.string().min(1, "Body must not be empty").max(5000),
+});
+
 export const summarizeDraftSchema = z.object({
   summary: z.string().min(1, "Summary must not be empty").max(500),
   sentiment: z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "RISK"]),

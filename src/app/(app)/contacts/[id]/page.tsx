@@ -8,6 +8,7 @@ import { isAiConfigured } from "@/lib/ai/config";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { ContactStatusBadge } from "@/components/badges";
 import { ActivityForm } from "@/components/activities/activity-form";
+import { EmailDraftDialog } from "@/components/ai/email-draft-dialog";
 import { TaskList } from "@/components/tasks/task-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,12 @@ export default async function ContactDetailPage({
             <span className="mx-1">·</span> Owned by {contact.ownerName}
           </p>
         </div>
+        <EmailDraftDialog
+          contactId={contact.id}
+          contactName={contact.name}
+          remaining={aiRemaining}
+          aiConfigured={isAiConfigured()}
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

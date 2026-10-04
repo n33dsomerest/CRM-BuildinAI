@@ -21,7 +21,10 @@ export interface AiCompletionRequest {
 
 export interface AiCompletion {
   text: string;
+  /** The model that actually served the call - may be a fallback. */
   model: string;
+  /** Gateway-reported provider behind the model, when the gateway reports one. */
+  provider?: string;
   inputTokens: number;
   outputTokens: number;
 }

@@ -1,14 +1,14 @@
 "use server";
 
 import { cacheKey, getCached, setCached } from "@/lib/ai/cache";
-import { getAiConfig, modelFor } from "@/lib/ai/config";
+import { getAiConfig } from "@/lib/ai/config";
 import { buildDraftEmailPrompt } from "@/lib/ai/prompts/draft-email";
 import { buildScoreLeadPrompt } from "@/lib/ai/prompts/score-lead";
 import { clampBatchSize, computeAverageOpenDealValue, computeWinRate } from "@/lib/ai/scoring";
 import { getRemaining } from "@/lib/ai/quota";
 import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
 import { exhaustionMessage, finalize, reserve } from "@/lib/ai/quota";
-import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
+import { createGatewayProvider } from "@/lib/ai/provider-gateway";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
 import { revalidatePath } from "next/cache";
 import { diffChanges, recordAudit } from "@/lib/audit";
@@ -66,11 +66,14 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
   const cached = await getCached<SummaryDraft>(key);
   if (cached) return ok({ ...cached, truncated: cached.truncated ?? false });
 
-  const reservationId = await reserve(session.user.id, "summarize", config.cheapModel);
+  const reservationId = await reserve(session.user.id, "summarize");
   if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt, truncated } = buildSummarizePrompt(body);
-  const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: config.cheapModel });
+  // 2000 tokens of headroom: reasoning fallbacks in the chain (deepseek-v4-flash
+  // measured 282-678 output tokens) need it; models that don't are charged on
+  // actual usage, not on max_tokens.
+  const provider = createGatewayProvider(config);
 
   let completion;
   try {
@@ -78,12 +81,11 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
       system,
       prompt,
       json: true,
-      maxOutputTokens: 700,
-      model: config.cheapModel,
+      maxOutputTokens: 2000,
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: config.cheapModel });
+    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
     logError("summarizeActivityDraft", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -93,6 +95,7 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
     model: completion.model,
+    provider: completion.provider,
   });
 
   // Strict validation of the model output - never trust raw JSON.
@@ -165,8 +168,7 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const cached = await getCached<EmailDraft>(key);
   if (cached) return ok({ ...cached, aiGenerated: true });
 
-  const strongModel = modelFor("strong") ?? config.model;
-  const reservationId = await reserve(session.user.id, "draft", strongModel);
+  const reservationId = await reserve(session.user.id, "draft");
   if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const { system, prompt } = buildDraftEmailPrompt({
@@ -182,10 +184,12 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     recentActivities: contact.activities.map((a) => ({ type: a.type, subject: a.subject })),
   });
 
-  const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: strongModel });
+  const provider = createGatewayProvider(config);
 
   let completion;
   try {
+    // 800 tokens of headroom - measured drafting output is 45-147 tokens; a
+    // reasoning fallback may need more, and the budget charges actual usage.
     completion = await provider.complete({
       system,
       prompt,
@@ -194,7 +198,7 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: strongModel });
+    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
     logError("draftFollowUpEmail", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -204,6 +208,7 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
     model: completion.model,
+    provider: completion.provider,
   });
 
   let parsedOutput;
@@ -318,8 +323,7 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     return ok({ ...cached, leadId: lead.id });
   }
 
-  const cheapModel = modelFor("cheap") ?? config.model;
-  const reservationId = await reserve(session.user.id, "score", cheapModel);
+  const reservationId = await reserve(session.user.id, "score");
   if (!reservationId) return fail(await exhaustionMessage(session.user.id));
 
   const agg = await teamAggregates(session.user.id);
@@ -340,20 +344,21 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     },
   });
 
-  const provider = createOpenRouterProvider({ apiKey: config.apiKey, model: cheapModel });
+  const provider = createGatewayProvider(config);
 
   let completion;
   try {
+    // 300 tokens of headroom - measured scoring output is 50-86 tokens; keep
+    // the headroom for reasoning fallbacks, budget charges actual usage.
     completion = await provider.complete({
       system,
       prompt,
       json: true,
       maxOutputTokens: 300,
-      model: cheapModel,
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
-    await finalize(reservationId, { ok: false, error: errorClass, model: cheapModel });
+    await finalize(reservationId, { ok: false, error: errorClass, model: undefined });
     logError("scoreLead", error);
     return fail("AI request failed - the attempt still counted against your daily limit. Try again later.");
   }
@@ -363,6 +368,7 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     inputTokens: completion.inputTokens,
     outputTokens: completion.outputTokens,
     model: completion.model,
+    provider: completion.provider,
   });
 
   let parsedOutput;

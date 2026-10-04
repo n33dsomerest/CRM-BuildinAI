@@ -1,28 +1,33 @@
-import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
+import { createGatewayProvider } from "@/lib/ai/provider-gateway";
 import type { AiProvider } from "@/lib/ai/provider";
 
 /**
  * Resolves and validates the AI configuration once. If anything is missing the
  * callers return `fail("AI is not configured")` — never crash a render, never
- * silently no-op. A placeholder/empty key counts as unconfigured.
+ * silently no-op. A placeholder key (e.g. the literal YOUR_API_KEY) counts as
+ * unconfigured - that is exactly the failure hit during setup.
  */
 
 export interface AiConfig {
   apiKey: string;
-  model: string;
-  cheapModel: string;
+  baseUrl: string;
+  /** Ordered chain: [primary, ...fallbacks]. */
+  models: string[];
 }
 
-export const DEFAULT_AI_MODEL = "anthropic/claude-sonnet-4.5";
-export const DEFAULT_CHEAP_AI_MODEL = "google/gemini-2.5-flash";
+export const DEFAULT_AI_BASE_URL = "https://gen.ai.kku.ac.th/okmd/api/v1";
+export const DEFAULT_AI_MODEL = "gemini-2.5-flash-lite";
 
 export function getAiConfig(): AiConfig | null {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
-  if (!apiKey) return null;
+  const apiKey = process.env.AI_API_KEY?.trim() ?? process.env.OPENROUTER_API_KEY?.trim() ?? "";
+  if (!apiKey || /^YOUR_API_KEY$/i.test(apiKey)) return null;
 
-  const model = process.env.AI_MODEL?.trim() || DEFAULT_AI_MODEL;
-  const cheapModel = process.env.AI_MODEL_CHEAP?.trim() || DEFAULT_CHEAP_AI_MODEL;
-  return { apiKey, model, cheapModel };
+  const baseUrl = (process.env.AI_BASE_URL?.trim() || DEFAULT_AI_BASE_URL).replace(/\/+$/, "");
+  const primary = process.env.AI_MODEL?.trim() || DEFAULT_AI_MODEL;
+  const fallbacks = (process.env.AI_MODEL_FALLBACKS?.split(",") ?? [])
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return { apiKey, baseUrl, models: [primary, ...fallbacks] };
 }
 
 export function isAiConfigured(): boolean {
@@ -32,12 +37,5 @@ export function isAiConfigured(): boolean {
 export function getAiProvider(): AiProvider | null {
   const config = getAiConfig();
   if (!config) return null;
-  return createOpenRouterProvider({ apiKey: config.apiKey, model: config.model });
-}
-
-/** Model id for a given cost tier; cheap tier falls back to the main model. */
-export function modelFor(tier: "strong" | "cheap"): string | null {
-  const config = getAiConfig();
-  if (!config) return null;
-  return tier === "cheap" ? config.cheapModel : config.model;
+  return createGatewayProvider(config);
 }

@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getAiConfig, isAiConfigured, modelFor } from "@/lib/ai/config";
-
-const KEY = "sk-or-v1-testkeyvalue000000";
+import { getAiConfig, isAiConfigured } from "@/lib/ai/config";
 
 function withEnv(env: Record<string, string | undefined>, fn: () => void) {
   const saved: Record<string, string | undefined> = {};
@@ -20,42 +18,53 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void) {
   }
 }
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
 describe("getAiConfig", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("reports unconfigured when the key is missing", () => {
-    withEnv({ OPENROUTER_API_KEY: undefined, AI_MODEL: undefined }, () => {
+    withEnv({ AI_API_KEY: undefined, OPENROUTER_API_KEY: undefined }, () => {
       expect(getAiConfig()).toBeNull();
       expect(isAiConfigured()).toBe(false);
-      expect(modelFor("strong")).toBeNull();
+    });
+  });
+
+  it("treats the literal placeholder YOUR_API_KEY as unconfigured", () => {
+    withEnv({ AI_API_KEY: "YOUR_API_KEY" }, () => {
+      expect(getAiConfig()).toBeNull();
+      expect(isAiConfigured()).toBe(false);
     });
   });
 
   it("treats an empty or whitespace key as unconfigured", () => {
-    withEnv({ OPENROUTER_API_KEY: "   ", AI_MODEL: undefined }, () => {
+    withEnv({ AI_API_KEY: "   " }, () => {
       expect(getAiConfig()).toBeNull();
     });
   });
 
-  it("applies default models when only the key is set", () => {
-    withEnv({ OPENROUTER_API_KEY: KEY, AI_MODEL: undefined, AI_MODEL_CHEAP: undefined }, () => {
-      const config = getAiConfig();
-      expect(config).toEqual({
-        apiKey: KEY,
-        model: "anthropic/claude-sonnet-4.5",
-        cheapModel: "google/gemini-2.5-flash",
+  it("applies the default gateway and model when only the key is set", () => {
+    withEnv({ AI_API_KEY: "gw-key", AI_BASE_URL: undefined, AI_MODEL: undefined, AI_MODEL_FALLBACKS: undefined }, () => {
+      expect(getAiConfig()).toEqual({
+        apiKey: "gw-key",
+        baseUrl: "https://gen.ai.kku.ac.th/okmd/api/v1",
+        models: ["gemini-2.5-flash-lite"],
       });
     });
   });
 
-  it("honours explicit model overrides", () => {
+  it("builds the ordered chain from AI_MODEL + comma-separated fallbacks", () => {
     withEnv(
-      { OPENROUTER_API_KEY: KEY, AI_MODEL: "vendor/strong", AI_MODEL_CHEAP: "vendor/cheap" },
+      {
+        AI_API_KEY: "gw-key",
+        AI_BASE_URL: "https://gateway.test/v1/",
+        AI_MODEL: "primary",
+        AI_MODEL_FALLBACKS: "fallback-a, fallback-b ,",
+      },
       () => {
-        expect(modelFor("strong")).toBe("vendor/strong");
-        expect(modelFor("cheap")).toBe("vendor/cheap");
+        const config = getAiConfig();
+        expect(config?.baseUrl).toBe("https://gateway.test/v1");
+        expect(config?.models).toEqual(["primary", "fallback-a", "fallback-b"]);
       }
     );
   });

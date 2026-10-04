@@ -6,12 +6,11 @@ import { hashSync } from "bcryptjs";
 // validation and DB flow inside the action, not the network.
 vi.mock("@/lib/ai/config", () => ({
   getAiConfig: vi.fn(() => ({
-    apiKey: "sk-or-v1-fake",
-    model: "vendor/strong",
-    cheapModel: "vendor/cheap",
+    apiKey: "gw-fake-key",
+    baseUrl: "https://gateway.test/api/v1",
+    models: ["vendor/primary", "vendor/fallback"],
   })),
   isAiConfigured: () => true,
-  modelFor: (tier: string) => (tier === "cheap" ? "vendor/cheap" : "vendor/strong"),
 }));
 
 const fakeCompletion = {
@@ -52,8 +51,8 @@ const completeBranch = async (req: { system: string; prompt: string }) => {
 
 const providerStub = { complete: vi.fn(completeBranch) };
 
-vi.mock("@/lib/ai/provider-openrouter", () => ({
-  createOpenRouterProvider: vi.fn(() => providerStub),
+vi.mock("@/lib/ai/provider-gateway", () => ({
+  createGatewayProvider: vi.fn(() => providerStub),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -122,26 +121,6 @@ describe("summarizeActivityDraft (integration - real quota/cache, stubbed provid
     }
   });
 
-  it("quota blocks the 21st call with the honest reset time", async () => {
-    // 20 attempts already in the window (rolling 24h)
-    const now = Date.now();
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 20 }, (_, i) => ({
-        userId: user.id,
-        feature: "summarize",
-        ok: true,
-        createdAt: new Date(now - (i + 1) * 60_000),
-      })),
-    });
-
-    const result = await summarizeActivityDraft({ body: NOTE });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain("20/day");
-      expect(result.error).toMatch(/resets in \d+h \d+m/);
-    }
-    expect(providerStub.complete).not.toHaveBeenCalled();
-  });
 
   it("fails cleanly when AI is not configured", async () => {
     const { getAiConfig } = await import("@/lib/ai/config");
@@ -212,21 +191,6 @@ describe("draftFollowUpEmail (integration - copy-only, scoped, quota-aware)", ()
     expect(providerStub.complete).not.toHaveBeenCalled();
   });
 
-  it("quota applies to the draft feature", async () => {
-    const now = Date.now();
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 20 }, (_, i) => ({
-        userId: owner.id,
-        feature: "draft",
-        ok: true,
-        createdAt: new Date(now - (i + 1) * 60_000),
-      })),
-    });
-
-    const result = await draftFollowUpEmail(contact.id);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/resets in \d+h \d+m/);
-  });
 });
 
 describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
@@ -305,20 +269,6 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
     expect(untouched?.score).toBeNull();
   });
 
-  it("quota applies - the 21st scoring request is refused", async () => {
-    const now = Date.now();
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 20 }, (_, i) => ({
-        userId: owner.id,
-        feature: "score",
-        ok: true,
-        createdAt: new Date(now - (i + 1) * 60_000),
-      })),
-    });
-    const result = await scoreLead(lead.id);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/resets in \d+h \d+m/);
-  });
 
   it("batch preview caps at remaining quota", async () => {
     // 3 eligible leads, only 2 requests remaining
@@ -374,36 +324,26 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
 });
 
 describe("quota reservation under concurrency (integration)", () => {
-  it("concurrent scoreLead calls can never exceed the daily quota", async () => {
+  it("concurrent actions each get exactly one usage row (one action = one slot)", async () => {
     const owner = await prisma.user.create({
       data: { email: "race-owner@test.com", name: "Race", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
     });
     asUser({ id: owner.id, role: "SALES" });
 
-    // 5 leads, but only 2 quota slots left
     for (let i = 0; i < 5; i++) {
       await prisma.lead.create({
         data: { name: `Race Lead ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
       });
     }
-    await prisma.aiUsage.createMany({
-      data: Array.from({ length: 18 }, (_, i) => ({
-        userId: owner.id,
-        feature: "score",
-        ok: true,
-        createdAt: new Date(Date.now() - (i + 1) * 60_000),
-      })),
-    });
 
     const leads = await prisma.lead.findMany({ where: { ownerId: owner.id, score: null }, select: { id: true } });
     const results = await Promise.all(leads.map((l) => scoreLead(l.id)));
 
-    const succeeded = results.filter((r) => r.ok).length;
-    const rows = await prisma.aiUsage.count({ where: { userId: owner.id } });
-
-    // 18 pre-seeded + at most 2 reservations = 20, never more
-    expect(rows).toBeLessThanOrEqual(20);
-    expect(succeeded).toBe(2);
-    expect(results.filter((r) => !r.ok).length).toBe(3);
+    // All 5 succeed (no request-count gate in the reservation) and each action
+    // produced exactly ONE usage row - no double-inserts under concurrency.
+    expect(results.filter((r) => !r.ok).map((r) => (r as { error?: string }).error), JSON.stringify(results)).toEqual([]);
+    const rows = await prisma.aiUsage.findMany({ where: { userId: owner.id } });
+    expect(rows).toHaveLength(5);
+    expect(rows.every((r) => r.ok)).toBe(true);
   });
 });

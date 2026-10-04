@@ -15,7 +15,10 @@ export interface FinalizeResult {
   ok: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  /** The model that actually served the call - may be a chain fallback. */
   model?: string;
+  /** Gateway-reported provider behind the model, when reported. */
+  provider?: string;
   /** Error class only ("rate-limited", "timeout") — never prompt or completion text. */
   error?: string;
 }
@@ -46,16 +49,16 @@ export async function getRemaining(userId: string, now = new Date()): Promise<nu
  * Atomically reserve one slot. Returns the AiUsage row id to pass to
  * `finalize`, or null when the user has no slots left.
  */
-export async function reserve(userId: string, feature: string, model: string | null): Promise<string | null> {
+export async function reserve(userId: string, feature: string): Promise<string> {
   return db.$transaction(async (tx) => {
     // Serialise concurrent reservations for this user inside the transaction.
     // Released automatically when the transaction ends, including on failure.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
-    const used = await tx.aiUsage.count({
-      where: { userId, createdAt: { gt: new Date(Date.now() - WINDOW_MS) } },
-    });
-    if (used >= DAILY_QUOTA) return null;
-    const row = await tx.aiUsage.create({ data: { userId, feature, ok: true, model } });
+    // The row IS the concurrency slot. With per-model token budgets the
+    // enforcement lives in the provider chain's budget gates (hasBudget /
+    // remainingTokens) plus the action-level all-models-exhausted pre-check -
+    // the serving model is not known until the chain picks one.
+    const row = await tx.aiUsage.create({ data: { userId, feature, ok: true } });
     return row.id;
   });
 }

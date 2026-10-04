@@ -277,6 +277,25 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
     expect(updated?.scoredAt).not.toBeNull();
   });
 
+  it("audits the score write on the fresh path and the cache-hit path", async () => {
+    await scoreLead(lead.id);
+    await scoreLead(lead.id); // cache hit - still an audited CRM write
+
+    const audits = await prisma.auditLog.findMany({
+      where: { entity: "Lead", action: "UPDATE", entityId: lead.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(audits).toHaveLength(2);
+    // first write: null -> 82, recorded as a field diff
+    expect(audits[0].changes).toMatchObject({ score: { from: "", to: "82" } });
+    // cache-hit write re-asserts the same score: audited, with only the
+    // timestamp actually changing (score/scoreReason correctly absent)
+    const hitChanges = audits[1].changes as Record<string, unknown>;
+    expect(hitChanges.score).toBeUndefined();
+    expect(hitChanges.scoreReason).toBeUndefined();
+    expect(hitChanges.scoredAt).toBeDefined();
+  });
+
   it("SALES cannot score another user's lead", async () => {
     asUser({ id: stranger.id, role: "SALES" });
     const result = await scoreLead(lead.id);

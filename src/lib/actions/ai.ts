@@ -10,6 +10,8 @@ import { buildSummarizePrompt } from "@/lib/ai/prompts/summarize";
 import { consume, exhaustionMessage, getQuotaState } from "@/lib/ai/quota";
 import { createOpenRouterProvider } from "@/lib/ai/provider-openrouter";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { revalidatePath } from "next/cache";
+import { diffChanges, recordAudit } from "@/lib/audit";
 import { isOwnedRecord } from "@/lib/authorize";
 import { db } from "@/lib/db";
 import { logError } from "@/lib/log";
@@ -270,6 +272,34 @@ async function teamAggregates(userId: string) {
   };
 }
 
+/**
+ * Persists a score (from cache or fresh) with the full audit trail every other
+ * CRM write goes through: model output has already passed leadScoreSchema, the
+ * write is diffed against the prior values into AuditLog, and the leads table
+ * is revalidated so the new score column reflects the change.
+ */
+async function persistScore(
+  lead: { id: string; score: number | null; scoreReason: string | null; scoredAt: Date | null },
+  values: { score: number; reason: string },
+  userId: string
+): Promise<void> {
+  const updated = await db.lead.update({
+    where: { id: lead.id },
+    data: { score: values.score, scoreReason: values.reason, scoredAt: new Date() },
+  });
+  await recordAudit({
+    entity: "Lead",
+    entityId: lead.id,
+    action: "UPDATE",
+    userId,
+    changes: diffChanges(
+      { score: lead.score, scoreReason: lead.scoreReason, scoredAt: lead.scoredAt } as Record<string, unknown>,
+      { score: updated.score, scoreReason: updated.scoreReason, scoredAt: updated.scoredAt } as Record<string, unknown>
+    ),
+  });
+  revalidatePath("/leads");
+}
+
 export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreResult>> {
   const session = await requireAuth();
 
@@ -284,10 +314,13 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
   const key = cacheKey("score-lead", { leadId, leadUpdatedAt: lead.updatedAt.toISOString() });
   const cached = await getCached<LeadScoreResult>(key);
   if (cached) {
-    await db.lead.update({
-      where: { id: lead.id },
-      data: { score: cached.score, scoreReason: cached.reason, scoredAt: new Date() },
-    });
+    // Cached values were validated when first produced, but they are
+    // re-validated here: nothing reaches Prisma unvalidated, never clamped.
+    const persistable = leadScoreSchema.safeParse({ score: cached.score, reason: cached.reason });
+    if (!persistable.success) {
+      return fail(`Cached score is invalid - score the lead again (${persistable.error.issues[0]?.message ?? "invalid"})`);
+    }
+    await persistScore(lead, { score: persistable.data.score, reason: persistable.data.reason }, session.user.id);
     return ok({ ...cached, leadId: lead.id });
   }
 
@@ -359,10 +392,7 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     reason: parsedOutput.data.reason,
   };
   await setCached(key, "score-lead", { score: result.score, reason: result.reason });
-  await db.lead.update({
-    where: { id: lead.id },
-    data: { score: result.score, scoreReason: result.reason, scoredAt: new Date() },
-  });
+  await persistScore(lead, { score: result.score, reason: result.reason }, session.user.id);
   return ok(result);
 }
 

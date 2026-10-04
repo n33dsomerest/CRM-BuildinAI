@@ -40,6 +40,23 @@ npm run dev        # http://localhost:3000
 
 **Demo accounts** (from seed): `admin@crm.dev / Admin!2345` · `sarah@crm.dev / Sales!2345` · `david@crm.dev / Sales!2345`
 
+## AI features (OpenRouter)
+
+Set two variables in `.env` (and in Vercel's environment settings) - never commit them:
+
+| Key | Purpose |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Your key from https://openrouter.ai/keys |
+| `AI_MODEL` | Strong model for user-visible drafting (default `anthropic/claude-sonnet-4.5`) |
+| `AI_MODEL_CHEAP` | Cheap model for summarization/scoring (default `google/gemini-2.5-flash`) |
+
+Then run `npm run ai:check` - it validates the key and confirms both models are reachable.
+
+**Quota:** every user gets 20 AI requests per rolling 24 hours, counted per request (failures
+and retries included). Cache hits are free. Token usage is recorded for cost visibility only.
+The app never auto-writes to the CRM with AI: the summarizer and email drafts produce editable
+drafts, and scoring is a suggestion with reasons - a human confirms everything.
+
 ## Scripts
 
 | Command | Purpose |
@@ -48,6 +65,8 @@ npm run dev        # http://localhost:3000
 | `npm run build` | Production build (typecheck + lint clean) |
 | `npm test` | Vitest unit tests (validation, scoping, audit diff) |
 | `npm run test:integration` | Integration tests against a separate test database (row-level security, IDOR, CSV import) |
+| `npm run ai:check` | Validate the OpenRouter key and configured models |
+| `npm run check:secrets` | Fail if a credential-like literal is committed |
 | `npm run db:migrate` | Create/apply migrations in development |
 | `npm run db:deploy` | Apply migrations in production (`prisma migrate deploy`) |
 | `npm run db:seed` | Seed demo data |

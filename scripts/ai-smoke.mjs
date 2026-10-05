@@ -178,7 +178,13 @@ async function runTaskOnce(model, task) {
     try {
       parsed = task.schema.safeParse(JSON.parse(extractJsonObject(content)));
     } catch {
-      return { pass: false, note: "unparseable JSON", ms: Date.now() - started, tokens: 0 };
+      // Capture the raw response so a gateway blip is self-diagnosing.
+      return {
+        pass: false,
+        note: `unparseable JSON (finish=${data.choices?.[0]?.finish_reason ?? "?"}, raw=${JSON.stringify(content.slice(0, 120))})`,
+        ms: Date.now() - started,
+        tokens: 0,
+      };
     }
     if (!parsed.success) {
       return {

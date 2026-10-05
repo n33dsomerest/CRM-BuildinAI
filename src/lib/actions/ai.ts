@@ -207,13 +207,15 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
 
   let completion;
   try {
-    // 800 tokens of headroom - measured drafting output is 45-147 tokens; a
-    // reasoning fallback may need more, and the budget charges actual usage.
+    // 2000 tokens of headroom: measured drafting output is 45-147 tokens on
+    // non-reasoning models, but reasoning fallbacks (deepseek-v4-flash) spend
+    // a variable 164-825 tokens on thinking before emitting content. Billing
+    // is on actual usage, not max_tokens.
     completion = await provider.complete({
       system,
       prompt,
       json: true,
-      maxOutputTokens: 800,
+      maxOutputTokens: 2000,
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);
@@ -377,13 +379,15 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
 
   let completion;
   try {
-    // 300 tokens of headroom - measured scoring output is 50-86 tokens; keep
-    // the headroom for reasoning fallbacks, budget charges actual usage.
+    // 2000 tokens of headroom: measured scoring output is 50-86 tokens on
+    // non-reasoning models, but reasoning fallbacks intermittently exceed a
+    // 300 ceiling (finish_reason=length, empty content). Billing is on
+    // actual usage, not max_tokens.
     completion = await provider.complete({
       system,
       prompt,
       json: true,
-      maxOutputTokens: 300,
+      maxOutputTokens: 2000,
     });
   } catch (error) {
     const errorClass = providerErrorClass(error);

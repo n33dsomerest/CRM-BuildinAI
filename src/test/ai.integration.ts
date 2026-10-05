@@ -300,8 +300,13 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
   });
 
   it("batch stops cleanly when every model's token budget runs out mid-run", async () => {
-    // One scoreLead call costs 90 totalTokens (60 in + 30 out from the stub).
-    // Seed both chain models at 4950/5000: each survives exactly ONE call.
+    // One scoreLead call actually costs 90 totalTokens (60 in + 30 out from
+    // the stub), but reserve charges a 900-token ESTIMATE up front. Seed both
+    // chain models at 4950/5000: the first reserve sees 4950 < 5000 and
+    // charges the estimate; the second reserve (serialized inside the lock)
+    // reads 4950 + 90 = 5040 >= 5000 and refuses - the estimate is
+    // deliberately conservative, so the batch stops before the theoretical
+    // token maximum.
     for (const model of ["vendor/primary", "vendor/fallback"]) {
       await prisma.aiUsage.create({
         data: { userId: owner.id, feature: "score", ok: true, totalTokens: 4950, model },
@@ -312,23 +317,16 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
         data: { name: `Extra ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
       });
     }
-    // 3 eligible leads, combined budget survives exactly 2 calls
     const result = await scoreLeadsBatch();
     expect(result.ok, JSON.stringify(result)).toBe(true);
-    const failures = result.ok
-      ? (result as { data: { failed: number } }).data.failed
-      : 0;
-    expect(failures, JSON.stringify(result)).toBe(0);
-    void failures;
-    expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.requested).toBe(3);
-      expect(result.data.scored).toBe(2);
+      expect(result.data.scored).toBe(1);
       expect(result.data.failed).toBe(0);
-      expect(result.data.notAttempted).toBe(1);
+      expect(result.data.notAttempted).toBe(2);
     }
     const scored = await prisma.lead.count({ where: { ownerId: owner.id, score: { not: null } } });
-    expect(scored).toBe(2);
+    expect(scored).toBe(1);
   });
 
   it("a single scoreLead fails cleanly when both chain models are out of budget", async () => {
@@ -349,26 +347,46 @@ describe("lead scoring (integration - scoped, quota-aware, honest)", () => {
 });
 
 describe("quota reservation under concurrency (integration)", () => {
-  it("concurrent actions each get exactly one usage row (one action = one slot)", async () => {
+  it("concurrent reserves serialize: exactly one action fits the remaining budget", async () => {
     const owner = await prisma.user.create({
       data: { email: "race-owner@test.com", name: "Race", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
     });
     asUser({ id: owner.id, role: "SALES" });
 
+    // Budget 5000 for vendor/primary; already used 4860 -> 140 remaining.
+    // reserve() charges the 900-token estimate inside the lock, so exactly
+    // ONE of the concurrent reserves fits; the rest are refused.
     for (let i = 0; i < 5; i++) {
       await prisma.lead.create({
         data: { name: `Race Lead ${i}`, source: "WEB", status: "NEW", ownerId: owner.id },
       });
     }
+    await prisma.aiUsage.createMany({
+      data: Array.from({ length: 18 }, () => ({
+        userId: owner.id,
+        feature: "score",
+        ok: true,
+        totalTokens: 270, // 18 x 270 = 4860
+        model: "vendor/primary",
+        createdAt: new Date(Date.now() - 60_000),
+      })),
+    });
 
-    const leads = await prisma.lead.findMany({ where: { ownerId: owner.id, score: null }, select: { id: true } });
-    const results = await Promise.all(leads.map((l) => scoreLead(l.id)));
+    // Fire reserve() directly and concurrently - no pre-work, maximal
+    // overlap, reproducing the serverless topology (independent invocations).
+    const { reserve: reserveDirect } = await import("@/lib/ai/quota");
+    const reserveResults = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        reserveDirect(owner.id, "score", { model: "vendor/primary", limit: 5000 })
+      )
+    );
 
-    // All 5 succeed (no request-count gate in the reservation) and each action
-    // produced exactly ONE usage row - no double-inserts under concurrency.
-    expect(results.filter((r) => !r.ok).map((r) => (r as { error?: string }).error), JSON.stringify(results)).toEqual([]);
-    const rows = await prisma.aiUsage.findMany({ where: { userId: owner.id } });
-    expect(rows).toHaveLength(5);
-    expect(rows.every((r) => r.ok)).toBe(true);
+    const allowed = reserveResults.filter((r) => !r.overBudget).length;
+    expect(allowed).toBe(1);
+    expect(reserveResults.filter((r) => r.overBudget).length).toBe(4);
+
+    // Every reserve action produced exactly one usage row (18 seed + 5)
+    const rows = await prisma.aiUsage.count({ where: { userId: owner.id } });
+    expect(rows).toBe(23);
   });
 });

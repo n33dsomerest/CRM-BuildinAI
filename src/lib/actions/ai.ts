@@ -69,7 +69,14 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
   const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
-  const reservationId = await reserve(session.user.id, "summarize");
+  const primaryModel = config.models[0];
+  const primaryLimit = config.budgets.get(primaryModel);
+  const reservation = await reserve(session.user.id, "summarize", {
+    model: primaryModel,
+    limit: primaryLimit,
+  });
+  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  const reservationId = reservation.id;
 
   const { system, prompt, truncated } = buildSummarizePrompt(body);
   // 2000 tokens of headroom: reasoning fallbacks in the chain (deepseek-v4-flash
@@ -182,7 +189,14 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
-  const reservationId = await reserve(session.user.id, "draft");
+  const primaryModel = config.models[0];
+  const primaryLimit = config.budgets.get(primaryModel);
+  const reservation = await reserve(session.user.id, "draft", {
+    model: primaryModel,
+    limit: primaryLimit,
+  });
+  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  const reservationId = reservation.id;
 
   const { system, prompt } = buildDraftEmailPrompt({
     contactName: contact.name,
@@ -349,7 +363,14 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
   const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
-  const reservationId = await reserve(session.user.id, "score");
+  const primaryModel = config.models[0];
+  const primaryLimit = config.budgets.get(primaryModel);
+  const reservation = await reserve(session.user.id, "score", {
+    model: primaryModel,
+    limit: primaryLimit,
+  });
+  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  const reservationId = reservation.id;
 
   const agg = await teamAggregates(session.user.id);
   const { system, prompt } = buildScoreLeadPrompt({

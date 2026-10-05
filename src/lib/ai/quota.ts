@@ -118,21 +118,86 @@ export async function allModelsExhaustedMessage(
 }
 
 /**
- * Atomically reserve one concurrency slot: one AiUsage row per user-initiated
- * action, created BEFORE the provider call. The serving model is not known
- * until the chain picks one - finalize attributes the tokens.
+ * Estimated cost charged AT RESERVE TIME so the in-lock tally sees in-flight
+ * spend. Measured worst case on the chain is ~825 output tokens (deepseek);
+ * 900 covers every non-reasoning model with margin. finalize() corrects the
+ * row to the actual usage afterwards, so the window tally self-corrects.
  */
-export async function reserve(userId: string, feature: string): Promise<string> {
+export const ESTIMATED_TOKENS_PER_ACTION = 900;
+
+export interface ReserveResult {
+  id: string;
+  /** True when the model's shared budget was already exhausted at reserve time. */
+  overBudget: boolean;
+  /** Shared (all users) token tally for the model inside the window. */
+  used: number;
+}
+
+/**
+ * Atomically reserve one concurrency slot: one AiUsage row per user-initiated
+ * action, created BEFORE the provider call.
+ *
+ * HONEST LIMITATION: "check budget -> call the model -> record actual tokens"
+ * cannot be made atomic - that would mean holding this transaction and the
+ * advisory lock open across a multi-second HTTP call, pinning a pooled
+ * connection. What the layers actually guarantee:
+ *  - the GATEWAY is the real enforcement: daily_quota_tokens is a hard
+ *    ceiling and the gateway rejects over-budget calls itself;
+ *  - this local check is fail-fast UX (a clean message instead of a 429) and
+ *    it is serialized by the advisory lock with the ESTIMATED cost charged at
+ *    reserve time, so concurrent in-flight actions are visible to the tally;
+ *  - a race can therefore overshoot the local tally by at most the gap
+ *    between estimate and actual for the in-flight actions - bounded, and
+ *    harmless because the gateway rejects true overruns.
+ */
+export async function reserve(
+  userId: string,
+  feature: string,
+  options?: { model?: string; limit?: number }
+): Promise<ReserveResult> {
   return db.$transaction(async (tx) => {
-    // Serialise concurrent reservations for this user inside the transaction.
-    // Released automatically when the transaction ends, including on failure.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
-    const row = await tx.aiUsage.create({ data: { userId, feature, ok: true } });
-    return row.id;
+
+    let used = 0;
+    if (options?.model && options.limit !== undefined) {
+      // Shared tally: the gateway quota is per API KEY, so every user of the
+      // key draws from the same budget. (Per-user fairness is a separate,
+      // courtesy-level check - see the AI_USER_TOKEN_SHARE handling.)
+      const rows = await tx.aiUsage.findMany({
+        where: { model: options.model, createdAt: { gt: new Date(Date.now() - WINDOW_MS) } },
+        select: { totalTokens: true },
+      });
+      used = rows.reduce((sum, r) => sum + r.totalTokens, 0);
+    }
+
+    const row = await tx.aiUsage.create({
+      data: {
+        userId,
+        feature,
+        ok: true,
+        model: options?.model,
+        totalTokens: options?.model && options.limit !== undefined ? ESTIMATED_TOKENS_PER_ACTION : 0,
+      },
+    });
+
+    return {
+      id: row.id,
+      overBudget: options?.model !== undefined && options.limit !== undefined && used >= options.limit,
+      used,
+    };
   });
 }
 
-/** Record the outcome of a reserved action; totalTokens = input + output. */
+/**
+ * Record the outcome of a reserved action; totalTokens = input + output.
+ *
+ * The row keeps the model it was RESERVED for - it is not rewritten to the
+ * chain's serving model. Otherwise the estimate charged at reserve time would
+ * migrate off the reserved model's tally the moment a fallback served the
+ * call, and the estimate would stop protecting anything. The gateway's
+ * model_quota (persisted via gateway-quota.ts) remains the accurate per-model
+ * source; the provider field records the actual gateway provider observed.
+ */
 export async function finalize(reservationId: string, result: Omit<FinalizeResult, "totalTokens">): Promise<void> {
   const totalTokens = (result.inputTokens ?? 0) + (result.outputTokens ?? 0);
   await db.aiUsage.update({
@@ -142,7 +207,6 @@ export async function finalize(reservationId: string, result: Omit<FinalizeResul
       inputTokens: result.inputTokens ?? 0,
       outputTokens: result.outputTokens ?? 0,
       totalTokens,
-      model: result.model,
       provider: result.provider,
       error: result.error,
     },

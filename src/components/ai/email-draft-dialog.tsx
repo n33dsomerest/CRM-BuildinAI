@@ -21,9 +21,11 @@ import { Textarea } from "@/components/ui/textarea";
 interface AiBudgetInfo {
   model: string;
   unknown: boolean;
-  used: number;
-  limit: number;
-  remaining: number;
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  userUsed: number;
+  userLimit: number;
 }
 
 interface EmailDraftDialogProps {
@@ -45,7 +47,8 @@ export function EmailDraftDialog({ contactId, contactName, aiBudget, aiConfigure
   const [body, setBody] = React.useState("");
   const [copied, setCopied] = React.useState<"subject" | "body" | null>(null);
 
-  const exhausted = !!aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0;
+  const exhausted =
+    !!aiBudget && !aiBudget.unknown && (aiBudget.sharedRemaining <= 0 || (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit));
 
   const draft = async () => {
     setPending(true);

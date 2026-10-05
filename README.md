@@ -63,6 +63,8 @@ server errors, truncated reasoning output, or non-JSON responses. Auth/credit fa
 fail immediately (all models share the key).
 
 **Budgets:** per model per rolling 24 hours, measured in total tokens (input + output).
+The gateway quota is per API KEY, so the tracked figure is SHARED across the team;
+`AI_USER_TOKEN_SHARE` (fraction 0-1, optional) caps what a single user may consume of it.
 A model absent from `AI_TOKEN_BUDGETS` has an unknown budget - it runs, but is not
 counted. One user action is one accounting row regardless of internal retries; cache
 hits consume nothing. The app never auto-writes to the CRM with AI: the summarizer and

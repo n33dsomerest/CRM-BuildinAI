@@ -29,6 +29,16 @@ export interface FinalizeResult {
   error?: string;
 }
 
+/** Sum of total tokens ALL users have spent on ONE model inside the window -
+ *  the shared (per API key) tally the gateway quota actually measures. */
+async function modelTokensUsedAllUsers(model: string, now = new Date()): Promise<number> {
+  const rows = await db.aiUsage.findMany({
+    where: { model, createdAt: { gt: new Date(now.getTime() - WINDOW_MS) } },
+    select: { totalTokens: true },
+  });
+  return rows.reduce((sum, r) => sum + r.totalTokens, 0);
+}
+
 /** Sum of total tokens a user has spent on ONE model inside the window. */
 async function modelTokensUsed(userId: string, model: string, now = new Date()): Promise<number> {
   const rows = await db.aiUsage.findMany({
@@ -59,30 +69,49 @@ export interface ModelBudgetState {
   used: number;
 }
 
-/** UI figure: the primary model's budget state, or unknown-budget marker. */
+/** UI figures: the primary model's SHARED budget state plus the caller's
+ *  personal share (when userLimit is configured), or unknown-budget marker. */
 export async function getPrimaryModelBudget(
   userId: string,
   primaryModel: string,
   budgets: Map<string, number>,
+  userLimit?: number,
   now = new Date()
-): Promise<{ model: string; unknown: boolean; used: number; limit: number; remaining: number }> {
+): Promise<{
+  model: string;
+  unknown: boolean;
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  userUsed: number;
+  userLimit: number;
+}> {
   const limit = budgets.get(primaryModel);
-  const used = await modelTokensUsed(userId, primaryModel, now);
+  const sharedUsed = await modelTokensUsedAllUsers(primaryModel, now);
+  const userUsed = await modelTokensUsed(userId, primaryModel, now);
   if (limit === undefined) {
-    return { model: primaryModel, unknown: true, used, limit: 0, remaining: 0 };
+    return { model: primaryModel, unknown: true, sharedUsed, sharedLimit: 0, sharedRemaining: 0, userUsed, userLimit: 0 };
   }
-  const budget: TokenBudget = computeTokenBudget([{ totalTokens: used }], limit);
-  return { model: primaryModel, unknown: false, used: budget.used, limit: budget.limit, remaining: budget.remaining };
+  const budget: TokenBudget = computeTokenBudget([{ totalTokens: sharedUsed }], limit);
+  return {
+    model: primaryModel,
+    unknown: false,
+    sharedUsed: budget.used,
+    sharedLimit: budget.limit,
+    sharedRemaining: budget.remaining,
+    userUsed,
+    userLimit: userLimit ?? 0,
+  };
 }
 
 /**
  * Clean pre-check for the actions: when EVERY model in the chain that carries
- * a known budget is exhausted (and at least one is known), fail up front with
- * an honest message instead of letting the chain churn through refusals.
- * A chain with any unknown-budget model can always run.
+ * a known budget is exhausted ON THE SHARED (per-key) tally - summed across
+ * all users, because the gateway quota is per API key - fail up front with an
+ * honest, team-framed message instead of letting the chain churn through
+ * refusals. A chain with any unknown-budget model can always run.
  */
 export async function allModelsExhaustedMessage(
-  userId: string,
   models: string[],
   budgets: Map<string, number>,
   now = new Date()
@@ -95,7 +124,7 @@ export async function allModelsExhaustedMessage(
   for (const model of known) {
     const limit = budgets.get(model)!;
     const rows = await db.aiUsage.findMany({
-      where: { userId, model, createdAt: { gt: new Date(now.getTime() - WINDOW_MS) } },
+      where: { model, createdAt: { gt: new Date(now.getTime() - WINDOW_MS) } },
       select: { totalTokens: true, createdAt: true },
     });
     const budget = computeTokenBudget(rows, limit);
@@ -113,8 +142,9 @@ export async function allModelsExhaustedMessage(
   }
 
   if (exhaustedCount < known.length) return null;
+  const modelList = known.join(", ");
   const resetPart = oldestReset ? quotaExhaustedMessage(oldestReset, now) : "AI daily token budget reached";
-  return `${resetPart} for all configured models`;
+  return `${resetPart} for all configured models (${modelList}) - the team's daily budget is used up, try tomorrow`;
 }
 
 /**
@@ -127,10 +157,14 @@ export const ESTIMATED_TOKENS_PER_ACTION = 900;
 
 export interface ReserveResult {
   id: string;
-  /** True when the model's shared budget was already exhausted at reserve time. */
+  /** True when the model's SHARED (per-key) budget was already exhausted. */
   overBudget: boolean;
+  /** True when THIS USER already consumed their fairness share. */
+  overUserBudget: boolean;
   /** Shared (all users) token tally for the model inside the window. */
   used: number;
+  /** This user's own tally for the model inside the window. */
+  userUsed: number;
 }
 
 /**
@@ -153,21 +187,27 @@ export interface ReserveResult {
 export async function reserve(
   userId: string,
   feature: string,
-  options?: { model?: string; limit?: number }
+  options?: { model?: string; limit?: number; userLimit?: number }
 ): Promise<ReserveResult> {
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
 
     let used = 0;
+    let userUsed = 0;
     if (options?.model && options.limit !== undefined) {
       // Shared tally: the gateway quota is per API KEY, so every user of the
-      // key draws from the same budget. (Per-user fairness is a separate,
-      // courtesy-level check - see the AI_USER_TOKEN_SHARE handling.)
+      // key draws from the same budget. The per-user tally (when a fairness
+      // share is configured) is a courtesy cap, not enforcement.
       const rows = await tx.aiUsage.findMany({
         where: { model: options.model, createdAt: { gt: new Date(Date.now() - WINDOW_MS) } },
-        select: { totalTokens: true },
+        select: { totalTokens: true, userId: true },
       });
       used = rows.reduce((sum, r) => sum + r.totalTokens, 0);
+      if (options.userLimit !== undefined) {
+        userUsed = rows
+          .filter((r) => r.userId === userId)
+          .reduce((sum, r) => sum + r.totalTokens, 0);
+      }
     }
 
     const row = await tx.aiUsage.create({
@@ -183,7 +223,13 @@ export async function reserve(
     return {
       id: row.id,
       overBudget: options?.model !== undefined && options.limit !== undefined && used >= options.limit,
+      overUserBudget:
+        options?.userLimit !== undefined &&
+        options.model !== undefined &&
+        options.limit !== undefined &&
+        userUsed >= options.userLimit,
       used,
+      userUsed,
     };
   });
 }

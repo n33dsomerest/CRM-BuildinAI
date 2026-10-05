@@ -1,37 +1,55 @@
-import { Sparkles } from "lucide-react";
+import { Sparkles, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface QuotaIndicatorProps {
   model: string;
-  used: number;
-  limit: number;
-  remaining: number;
+  /** Shared (whole team, per API key) figures - the headline. */
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  /** Personal fairness-share figures - secondary, when configured. */
+  userUsed?: number;
+  userLimit?: number;
   /** True when the model has no AI_TOKEN_BUDGETS entry - no honest number exists. */
   unknown?: boolean;
   className?: string;
 }
 
 /**
- * Shared budget affordance rendered on every AI surface. Shows the PRIMARY
- * model's token budget: "182,340 / 180,000 tokens today". If the model has no
- * configured budget the indicator says "quota unknown" rather than a fake
- * number.
+ * Shared budget affordance rendered on every AI surface. The gateway quota is
+ * per API KEY, so the headline is the TEAM figure; the personal fairness share
+ * (when AI_USER_TOKEN_SHARE is configured) is shown secondarily. Unknown
+ * budgets say "quota unknown" rather than a fake number.
  */
-export function QuotaIndicator({ model, used, limit, remaining, unknown, className }: QuotaIndicatorProps) {
-  const low = !unknown && remaining <= limit * 0.25;
+export function QuotaIndicator({
+  model,
+  sharedUsed,
+  sharedLimit,
+  sharedRemaining,
+  userUsed,
+  userLimit,
+  unknown,
+  className,
+}: QuotaIndicatorProps) {
+  const low = !unknown && sharedRemaining <= sharedLimit * 0.25;
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs tabular-nums",
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs tabular-nums",
         low ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "text-muted-foreground",
         className
       )}
-      title={`AI model: ${model}. Rolling 24h window, input + output tokens.`}
+      title={`AI model: ${model}. Rolling 24h window, input + output tokens, shared across the team's API key.`}
     >
-      <Sparkles className={cn("size-3", low && "text-amber-500")} />
+      <Users className={cn("size-3", low && "text-amber-500")} />
       {unknown
         ? `quota unknown (${model})`
-        : `${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} tokens today`}
+        : `Team: ${sharedUsed.toLocaleString("en-US")} / ${sharedLimit.toLocaleString("en-US")} tokens today`}
+      {userLimit !== undefined && userLimit > 0 ? (
+        <span className="border-l pl-1.5 border-border">
+          You: {(userUsed ?? 0).toLocaleString("en-US")} / {userLimit.toLocaleString("en-US")}
+        </span>
+      ) : null}
     </span>
   );
 }

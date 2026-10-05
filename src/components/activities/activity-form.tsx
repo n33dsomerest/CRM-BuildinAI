@@ -35,9 +35,11 @@ export interface ActivityFormValues {
 interface AiBudgetInfo {
   model: string;
   unknown: boolean;
-  used: number;
-  limit: number;
-  remaining: number;
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  userUsed: number;
+  userLimit: number;
 }
 
 interface ActivityFormProps {
@@ -98,7 +100,12 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
     }
   });
 
-  const budgetExhausted = aiBudget !== undefined && aiBudget !== null && !aiBudget.unknown && aiBudget.remaining <= 0;
+  const budgetExhausted =
+    aiBudget !== undefined &&
+    aiBudget !== null &&
+    !aiBudget.unknown &&
+    (aiBudget.sharedRemaining <= 0 ||
+      (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit));
   const canSummarize = aiConfigured && (body?.trim().length ?? 0) >= 20 && !budgetExhausted;
 
   return (
@@ -148,9 +155,11 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
           {aiConfigured && aiBudget ? (
             <QuotaIndicator
               model={aiBudget.model}
-              used={aiBudget.used}
-              limit={aiBudget.limit}
-              remaining={aiBudget.remaining}
+              sharedUsed={aiBudget.sharedUsed}
+              sharedLimit={aiBudget.sharedLimit}
+              sharedRemaining={aiBudget.sharedRemaining}
+              userUsed={aiBudget.userUsed}
+              userLimit={aiBudget.userLimit}
               unknown={aiBudget.unknown}
               className="text-[11px]"
             />

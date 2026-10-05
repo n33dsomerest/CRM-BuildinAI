@@ -21,10 +21,15 @@ export default async function LeadsPage({
   const page = typeof params.page === "string" ? Number(params.page) : 1;
 
   const aiConfig = getAiConfig();
+  const primaryLimit = aiConfig?.budgets.get(aiConfig.models[0]);
+  const userLimit =
+    aiConfig?.userShare != null && primaryLimit !== undefined
+      ? Math.floor(primaryLimit * aiConfig.userShare)
+      : undefined;
   const [data, primaryBudget] = await Promise.all([
     getLeadsPage({ id: session.user.id, role: session.user.role }, { search, status, page }),
     aiConfig
-      ? getPrimaryModelBudget(session.user.id, aiConfig.models[0], aiConfig.budgets)
+      ? getPrimaryModelBudget(session.user.id, aiConfig.models[0], aiConfig.budgets, userLimit)
       : Promise.resolve(null),
   ]);
 

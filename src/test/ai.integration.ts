@@ -79,6 +79,7 @@ vi.mock("@/lib/session", () => ({
 }));
 
 import { requireAuth } from "@/lib/session";
+import { getAiConfig } from "@/lib/ai/config";
 import { draftFollowUpEmail, scoreLead, scoreLeadsBatch, summarizeActivityDraft } from "@/lib/actions/ai";
 import { getLeadScoringBatchPreview } from "@/lib/actions/ai";
 
@@ -388,5 +389,81 @@ describe("quota reservation under concurrency (integration)", () => {
     // Every reserve action produced exactly one usage row (18 seed + 5)
     const rows = await prisma.aiUsage.count({ where: { userId: owner.id } });
     expect(rows).toBe(23);
+  });
+});
+
+describe("shared vs per-user budget scope (integration)", () => {
+  let userA: { id: string };
+  let userB: { id: string };
+  let lead: { id: string };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    providerStub.complete.mockImplementation(completeBranch);
+    asUser({ id: "fixture", role: "SALES" });
+
+    userA = await prisma.user.create({
+      data: { email: "share-a@test.com", name: "A", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    userB = await prisma.user.create({
+      data: { email: "share-b@test.com", name: "B", passwordHash: hashSync("Sales!2345", 12), role: "SALES" },
+    });
+    lead = await prisma.lead.create({
+      data: { name: "Shared Lead", source: "WEB", status: "NEW", ownerId: userA.id },
+    });
+  });
+
+  it("the shared tally spans users: two users each under their share, together over the budget -> refused", async () => {
+    vi.mocked(requireAuth).mockResolvedValue({ user: { id: userA.id, role: "SALES" } } as never);
+    // Config mock has no AI_USER_TOKEN_SHARE wired (userShare null in getAiConfig)
+    // so the fairness check is off - the shared tally is what refuses.
+    // Seed: primary budget 5000, shared used 5500 (A: 3000, B: 2500) - each
+    // user is modest, together they exceed the model budget
+    await prisma.aiUsage.create({ data: { userId: userA.id, feature: "score", ok: true, totalTokens: 3000, model: "vendor/primary" } });
+    await prisma.aiUsage.create({ data: { userId: userB.id, feature: "score", ok: true, totalTokens: 2500, model: "vendor/primary" } });
+
+    asUser({ id: userA.id, role: "SALES" });
+    const result = await scoreLead(lead.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("team's daily token budget");
+      expect(result.error).toContain("vendor/primary");
+    }
+    expect(providerStub.complete).not.toHaveBeenCalled();
+  });
+
+  it("the user-share fairness cap blocks one user while the shared budget still has room", async () => {
+    // AI_USER_TOKEN_SHARE=0.5 -> userLimit = 2500 of 5000. A has used 2600.
+    vi.stubEnv("AI_USER_TOKEN_SHARE", "0.5");
+    vi.mocked(getAiConfig).mockReturnValue({
+      apiKey: "gw-fake-key",
+      baseUrl: "https://gateway.test/api/v1",
+      models: ["vendor/primary", "vendor/fallback"],
+      budgets: new Map([["vendor/primary", 5000], ["vendor/fallback", 5000]]),
+      userShare: 0.5,
+    });
+
+    await prisma.aiUsage.create({
+      data: { userId: userA.id, feature: "score", ok: true, totalTokens: 2600, model: "vendor/primary" },
+    });
+
+    asUser({ id: userA.id, role: "SALES" });
+    const result = await scoreLead(lead.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("your share");
+      expect(result.error).toContain("another rep can still use theirs");
+    }
+    expect(providerStub.complete).not.toHaveBeenCalled();
+
+    // The other user still has budget (shared used 2600 < 5000, B used 0) -
+    // give B their own lead since leads are owner-scoped
+    const leadB = await prisma.lead.create({
+      data: { name: "B Lead", source: "WEB", status: "NEW", ownerId: userB.id },
+    });
+    asUser({ id: userB.id, role: "SALES" });
+    const other = await scoreLead(leadB.id);
+    expect(other.ok, JSON.stringify(other)).toBe(true);
+    vi.unstubAllEnvs();
   });
 });

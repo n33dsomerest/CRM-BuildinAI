@@ -50,9 +50,11 @@ import {
 interface AiBudgetInfo {
   model: string;
   unknown: boolean;
-  used: number;
-  limit: number;
-  remaining: number;
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  userUsed: number;
+  userLimit: number;
 }
 
 interface LeadsTableProps {
@@ -215,9 +217,17 @@ export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiCo
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={!!aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0}
+                          disabled={
+                            !!aiBudget &&
+                            !aiBudget.unknown &&
+                            (aiBudget.sharedRemaining <= 0 ||
+                              (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit))
+                          }
                           title={
-                            aiBudget && !aiBudget.unknown && aiBudget.remaining <= 0
+                            !!aiBudget &&
+                            !aiBudget.unknown &&
+                            (aiBudget.sharedRemaining <= 0 ||
+                              (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit))
                               ? "Daily token budget reached"
                               : "Score with AI"
                           }

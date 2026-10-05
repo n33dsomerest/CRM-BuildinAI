@@ -66,16 +66,25 @@ export async function summarizeActivityDraft(input: unknown): Promise<ActionResu
   const cached = await getCached<SummaryDraft>(key);
   if (cached) return ok({ ...cached, truncated: cached.truncated ?? false });
 
-  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  const budgetGate = await allModelsExhaustedMessage(config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
   const primaryModel = config.models[0];
   const primaryLimit = config.budgets.get(primaryModel);
+  const userLimit = config.userShare !== null && primaryLimit !== undefined
+    ? Math.floor(primaryLimit * config.userShare)
+    : undefined;
   const reservation = await reserve(session.user.id, "summarize", {
     model: primaryModel,
     limit: primaryLimit,
+    userLimit,
   });
-  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  if (reservation.overBudget) {
+    return fail(`The team's daily token budget for ${primaryModel} is used up - try tomorrow`);
+  }
+  if (reservation.overUserBudget) {
+    return fail(`You've used your share of today's ${primaryModel} budget - another rep can still use theirs`);
+  }
   const reservationId = reservation.id;
 
   const { system, prompt, truncated } = buildSummarizePrompt(body);
@@ -186,16 +195,25 @@ export async function draftFollowUpEmail(contactId: string): Promise<ActionResul
   const cached = await getCached<EmailDraft>(key);
   if (cached) return ok({ ...cached, aiGenerated: true });
 
-  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  const budgetGate = await allModelsExhaustedMessage(config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
   const primaryModel = config.models[0];
   const primaryLimit = config.budgets.get(primaryModel);
+  const userLimit = config.userShare !== null && primaryLimit !== undefined
+    ? Math.floor(primaryLimit * config.userShare)
+    : undefined;
   const reservation = await reserve(session.user.id, "draft", {
     model: primaryModel,
     limit: primaryLimit,
+    userLimit,
   });
-  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  if (reservation.overBudget) {
+    return fail(`The team's daily token budget for ${primaryModel} is used up - try tomorrow`);
+  }
+  if (reservation.overUserBudget) {
+    return fail(`You've used your share of today's ${primaryModel} budget - another rep can still use theirs`);
+  }
   const reservationId = reservation.id;
 
   const { system, prompt } = buildDraftEmailPrompt({
@@ -360,16 +378,25 @@ export async function scoreLead(leadId: string): Promise<ActionResult<LeadScoreR
     return ok({ ...cached, leadId: lead.id });
   }
 
-  const budgetGate = await allModelsExhaustedMessage(session.user.id, config.models, config.budgets);
+  const budgetGate = await allModelsExhaustedMessage(config.models, config.budgets);
   if (budgetGate) return fail(budgetGate);
 
   const primaryModel = config.models[0];
   const primaryLimit = config.budgets.get(primaryModel);
+  const userLimit = config.userShare !== null && primaryLimit !== undefined
+    ? Math.floor(primaryLimit * config.userShare)
+    : undefined;
   const reservation = await reserve(session.user.id, "score", {
     model: primaryModel,
     limit: primaryLimit,
+    userLimit,
   });
-  if (reservation.overBudget) return fail(`AI daily token budget reached for ${primaryModel} - try again later`);
+  if (reservation.overBudget) {
+    return fail(`The team's daily token budget for ${primaryModel} is used up - try tomorrow`);
+  }
+  if (reservation.overUserBudget) {
+    return fail(`You've used your share of today's ${primaryModel} budget - another rep can still use theirs`);
+  }
   const reservationId = reservation.id;
 
   const agg = await teamAggregates(session.user.id);
@@ -484,7 +511,7 @@ export async function scoreLeadsBatch(): Promise<ActionResult<BatchScoreSummary>
       scored += 1;
       continue;
     }
-    if (result.error?.startsWith("AI daily token budget reached")) {
+    if (result.error?.startsWith("The team's daily token budget")) {
       // Budgets gone mid-batch (e.g. concurrent usage): stop instead of
       // burning failed iterations - the rest are not-attempted, not failed.
       notAttempted += 1;

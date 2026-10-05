@@ -35,8 +35,13 @@ export default async function ContactDetailPage({
   const contact = await getContactDetail({ id: session.user.id, role: session.user.role }, id);
   if (!contact) notFound();
   const aiConfig = getAiConfig();
+  const primaryLimit = aiConfig?.budgets.get(aiConfig.models[0]);
+  const userLimit =
+    aiConfig?.userShare != null && primaryLimit !== undefined
+      ? Math.floor(primaryLimit * aiConfig.userShare)
+      : undefined;
   const primaryBudget = aiConfig
-    ? await getPrimaryModelBudget(session.user.id, aiConfig.models[0], aiConfig.budgets)
+    ? await getPrimaryModelBudget(session.user.id, aiConfig.models[0], aiConfig.budgets, userLimit)
     : null;
 
   return (

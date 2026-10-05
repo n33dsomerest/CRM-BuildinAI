@@ -17,6 +17,10 @@ export interface AiConfig {
    *  the map has an UNKNOWN budget: allowed to run, not counted against any
    *  limit - never invent a number for it. */
   budgets: Map<string, number>;
+  /** Optional fairness cap: the fraction of a model's budget a single user
+   *  may consume. Null when AI_USER_TOKEN_SHARE is unset - no default in
+   *  code, the environment decides. */
+  userShare: number | null;
 }
 
 export const DEFAULT_AI_BASE_URL = "https://gen.ai.kku.ac.th/okmd/api/v1";
@@ -51,7 +55,16 @@ export function getAiConfig(): AiConfig | null {
     }
   }
 
-  return { apiKey, baseUrl, models: [primary, ...fallbacks], budgets };
+  // AI_USER_TOKEN_SHARE is a fraction (0-1) of a model's budget that a single
+  // user may consume. Unset = the fairness check is disabled.
+  let userShare: number | null = null;
+  const rawShare = process.env.AI_USER_TOKEN_SHARE?.trim();
+  if (rawShare) {
+    const parsed = Number.parseFloat(rawShare);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1) userShare = parsed;
+  }
+
+  return { apiKey, baseUrl, models: [primary, ...fallbacks], budgets, userShare };
 }
 
 export function isAiConfigured(): boolean {

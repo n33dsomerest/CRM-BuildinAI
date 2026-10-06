@@ -196,7 +196,7 @@ export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiCo
                       <SelectTrigger className="h-8 w-36 border-none bg-transparent p-0 shadow-none focus:ring-0 [&>svg]:ml-1">
                         <LeadStatusBadge status={lead.status} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent align="start" className="w-36">
                         <SelectItem value="NEW">New</SelectItem>
                         <SelectItem value="WORKING">Working</SelectItem>
                         <SelectItem value="QUALIFIED">Qualified</SelectItem>

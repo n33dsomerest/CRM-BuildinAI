@@ -44,7 +44,6 @@ const baseUrl = (envValue("AI_BASE_URL") || "https://gen.ai.kku.ac.th/okmd/api/v
 const apiKey = envValue("AI_API_KEY") || envValue("OPENROUTER_API_KEY");
 const primary = envValue("AI_MODEL") || "gemini-2.5-flash-lite";
 const fallbacks = (envValue("AI_MODEL_FALLBACKS") || "").split(",").map((m) => m.trim()).filter(Boolean);
-const models = [primary, ...fallbacks];
 
 if (!apiKey) {
   console.error("[ai:smoke] AI_API_KEY is not set.");

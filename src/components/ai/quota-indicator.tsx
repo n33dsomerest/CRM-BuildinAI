@@ -1,4 +1,4 @@
-import { Sparkles, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface QuotaIndicatorProps {

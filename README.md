@@ -1,4 +1,4 @@
-# Enterprise CRM — Full-Stack Sales Hub
+# Enterprise CRM — Full-Stack Sales Hub 100% VIBE CODE
 
 A production-ready, full-stack **Customer Relationship Management** app built to run on **Vercel + Neon** (GitHub version-controlled).
 

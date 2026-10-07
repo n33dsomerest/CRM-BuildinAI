@@ -9,6 +9,7 @@ import { isAiConfigured } from "@/lib/ai/config";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { ContactStatusBadge } from "@/components/badges";
 import { ActivityForm } from "@/components/activities/activity-form";
+import { CreateSuggestedTask } from "@/components/activities/create-suggested-task";
 import { EmailDraftDialog } from "@/components/ai/email-draft-dialog";
 import { TaskList } from "@/components/tasks/task-list";
 import { Badge } from "@/components/ui/badge";
@@ -199,6 +200,29 @@ export default async function ContactDetailPage({
                           </span>
                           {activity.summary}
                         </p>
+                      ) : null}
+                      {activity.nextStep ? (
+                        <p className="mt-1 rounded-md border-l-2 border-primary/40 px-2 py-1 text-sm">
+                          <span className="mr-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            Next step
+                          </span>
+                          {activity.nextStep}
+                        </p>
+                      ) : null}
+                      {activity.suggestedTask ? (
+                        <div className="mt-1 rounded-md border border-dashed px-2 py-1.5">
+                          <p className="text-sm">
+                            <span className="mr-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                              Suggested task
+                            </span>
+                            {activity.suggestedTask}
+                          </p>
+                          <CreateSuggestedTask
+                            title={activity.suggestedTask}
+                            contactId={activity.contactId}
+                            dealId={activity.dealId}
+                          />
+                        </div>
                       ) : null}
                       {activity.sentiment ? (
                         <Badge

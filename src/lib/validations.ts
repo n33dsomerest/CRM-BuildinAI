@@ -94,6 +94,8 @@ export const activitySchema = z.object({
   // AI-assisted fields: proposed by the summarizer, edited and confirmed by a human
   summary: optionalText(500),
   sentiment: z.preprocess(emptyToUndefined, z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "RISK"]).optional()),
+  nextStep: optionalText(300),
+  suggestedTask: optionalText(200),
   aiGenerated: z.coerce.boolean().optional(),
 });
 

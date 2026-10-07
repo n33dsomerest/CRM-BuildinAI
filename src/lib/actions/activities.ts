@@ -34,6 +34,8 @@ export async function addActivity(input: unknown): Promise<ActionResult<{ id: st
         body: data.body,
         summary: data.summary,
         sentiment: data.sentiment,
+        nextStep: data.nextStep,
+        suggestedTask: data.suggestedTask,
         aiGenerated: Boolean(data.summary) || Boolean(data.sentiment),
         contactId: contact.id,
         dealId: data.dealId,

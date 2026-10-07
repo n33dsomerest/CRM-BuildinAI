@@ -193,7 +193,10 @@ model Activity {
   body        String?
   summary     String?
   sentiment   String? // POSITIVE | NEUTRAL | NEGATIVE | RISK (AI-assisted, human-confirmed)
-  aiGenerated Boolean      @default(false)
+  // The summarizer proposes these; the human confirms them before saving.
+  nextStep      String?
+  suggestedTask String? // short task title the rep can create in one click
+  aiGenerated   Boolean  @default(false)
   contactId   String
   contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   dealId      String?

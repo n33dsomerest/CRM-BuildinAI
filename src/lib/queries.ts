@@ -71,9 +71,13 @@ export interface ActivityRow {
   body: string | null;
   summary: string | null;
   sentiment: string | null;
+  nextStep: string | null;
+  suggestedTask: string | null;
+  aiGenerated: boolean;
   occurredAt: Date;
   userName: string;
   dealTitle: string | null;
+  dealId: string | null;
   contactId: string;
 }
 
@@ -698,10 +702,14 @@ type ActivityWithRelations = {
   body: string | null;
   summary: string | null;
   sentiment: string | null;
+  nextStep: string | null;
+  suggestedTask: string | null;
+  aiGenerated: boolean;
   occurredAt: Date;
   contactId: string;
   user: { name: string };
   deal: { title: string } | null;
+  dealId: string | null;
 };
 
 function mapActivity(a: ActivityWithRelations): ActivityRow {
@@ -712,9 +720,13 @@ function mapActivity(a: ActivityWithRelations): ActivityRow {
     body: a.body,
     summary: a.summary,
     sentiment: a.sentiment,
+    nextStep: a.nextStep,
+    suggestedTask: a.suggestedTask,
+    aiGenerated: a.aiGenerated,
     occurredAt: a.occurredAt,
     userName: a.user.name,
     dealTitle: a.deal?.title ?? null,
+    dealId: a.dealId,
     contactId: a.contactId,
   };
 }

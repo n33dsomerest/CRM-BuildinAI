@@ -30,6 +30,8 @@ export interface ActivityFormValues {
   body: string;
   summary: string;
   sentiment: string;
+  nextStep: string;
+  suggestedTask: string;
 }
 
 interface AiBudgetInfo {
@@ -66,7 +68,17 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
     formState: { errors, isSubmitting },
   } = useForm<ActivityFormValues>({
     resolver: zodResolver(activitySchema) as unknown as Resolver<ActivityFormValues>,
-    defaultValues: { contactId, dealId: "", type: "NOTE", subject: "", body: "", summary: "", sentiment: "" },
+    defaultValues: {
+      contactId,
+      dealId: "",
+      type: "NOTE",
+      subject: "",
+      body: "",
+      summary: "",
+      sentiment: "",
+      nextStep: "",
+      suggestedTask: "",
+    },
   });
 
   const type = useWatch({ control, name: "type" });
@@ -83,6 +95,8 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
     }
     setValue("summary", result.data.summary);
     setValue("sentiment", result.data.sentiment);
+    setValue("nextStep", result.data.nextStep ?? "");
+    setValue("suggestedTask", result.data.suggestedTask ?? "");
     setTruncated(result.data.truncated);
     toast.success("AI draft ready - review and edit before saving");
   };
@@ -92,7 +106,17 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
     const result = await addActivity(values);
     if (result.ok) {
       toast.success("Activity logged");
-      reset({ contactId, dealId: "", type: "NOTE", subject: "", body: "", summary: "", sentiment: "" });
+      reset({
+        contactId,
+        dealId: "",
+        type: "NOTE",
+        subject: "",
+        body: "",
+        summary: "",
+        sentiment: "",
+        nextStep: "",
+        suggestedTask: "",
+      });
       setTruncated(false);
       router.refresh();
     } else {
@@ -235,6 +259,30 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
                 <SelectItem value="RISK">Risk</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="activity-next-step">Next step</Label>
+            <Textarea
+              id="activity-next-step"
+              rows={2}
+              placeholder="The single next action the note implies"
+              {...register("nextStep")}
+            />
+            {errors.nextStep ? <p className="text-xs text-destructive">{errors.nextStep.message}</p> : null}
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="activity-suggested-task">Suggested task</Label>
+            <Input
+              id="activity-suggested-task"
+              placeholder="e.g. Send DPA v2 to their legal team"
+              {...register("suggestedTask")}
+            />
+            <p className="text-xs text-muted-foreground">
+              Save the activity, then create this as a task in one click from the timeline.
+            </p>
+            {errors.suggestedTask ? (
+              <p className="text-xs text-destructive">{errors.suggestedTask.message}</p>
+            ) : null}
           </div>
         </div>
       ) : null}

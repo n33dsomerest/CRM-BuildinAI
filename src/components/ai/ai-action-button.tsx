@@ -4,59 +4,81 @@ import * as React from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import type { ActionResult } from "@/lib/action-result";
 
-interface AiActionButtonProps {
+interface AiActionButtonProps<T> {
   label: string;
-  /** Server action returning an ActionResult — invoked on click only. */
-  action: () => Promise<{ ok: boolean; error?: string }>;
-  onSuccess?: (data: unknown) => void;
-  /** Remaining daily requests; 0 disables the button before any call. */
-  remaining?: number;
-  disabled?: boolean;
+  /**
+   * Invoked on click only - an explicit user action. Return an ActionResult
+   * to get the shared toast-on-failure behaviour (quota messages arrive
+   * pre-formatted with the honest reset time from the quota layer) and hand
+   * the resolved result to onSuccess. Return nothing for buttons that merely
+   * open a surface (the actual call runs elsewhere).
+   */
+  onClick: () => ActionResult<T> | void | Promise<ActionResult<T> | void>;
+  onSuccess?: (result: { ok: true; data: T }) => void;
+  /** Controlled pending state - pass it when progress is shown elsewhere
+   *  (e.g. a dialog spinner); otherwise the button tracks its own transition. */
+  pending?: boolean;
+  /** Why the button cannot run right now (quota exhausted, unconfigured, input
+   *  too short, ...) - announced and shown on hover instead of just going grey. */
+  disabledReason?: string;
+  variant?: "outline" | "secondary" | "ghost" | "default";
+  icon?: React.ReactNode;
   className?: string;
 }
 
 /**
- * The ONLY way AI surfaces may trigger a model call: an explicit user click.
- * Shows pending state (aria-busy), disables itself when quota is exhausted,
- * and surfaces failures as toasts — quota messages arrive pre-formatted with
- * the honest reset time from the quota layer.
+ * The ONLY way AI surfaces may trigger a model call: an explicit user click
+ * through this button. Pending state (aria-busy), disable-with-reason and
+ * toast-on-failure all live here so quota messaging cannot drift per surface.
  */
-export function AiActionButton({
+export function AiActionButton<T = unknown>({
   label,
-  action,
+  onClick,
   onSuccess,
-  remaining,
-  disabled,
+  pending: controlledPending,
+  disabledReason,
+  variant = "outline",
+  icon,
   className,
-}: AiActionButtonProps) {
-  const [pending, startTransition] = React.useTransition();
-  const exhausted = remaining !== undefined && remaining <= 0;
+}: AiActionButtonProps<T>) {
+  const [transitionPending, startTransition] = React.useTransition();
+  const pending = controlledPending ?? transitionPending;
 
   const run = () => {
-    startTransition(async () => {
-      const result = await action();
-      if (!result.ok) {
-        toast.error(result.error ?? "AI request failed");
-        return;
-      }
-      if (onSuccess) onSuccess(result);
-    });
+    if (controlledPending !== undefined) {
+      void runOutcome();
+    } else {
+      startTransition(async () => {
+        await runOutcome();
+      });
+    }
+  };
+
+  const runOutcome = async () => {
+    const result = await onClick();
+    if (!result) return;
+    if (!result.ok) {
+      toast.error(result.error ?? "AI request failed");
+      return;
+    }
+    if (onSuccess) onSuccess(result);
   };
 
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={variant}
       size="sm"
       className={className}
       onClick={run}
-      disabled={disabled || pending || exhausted}
+      disabled={pending || disabledReason !== undefined}
       aria-busy={pending}
-      title={exhausted ? "Daily AI limit reached — resets within 24h" : undefined}
+      title={disabledReason}
     >
-      {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-      {exhausted ? "AI limit reached" : label}
+      {pending ? <Loader2 className="size-4 animate-spin" /> : (icon ?? <Sparkles className="size-4" />)}
+      {label}
     </Button>
   );
 }

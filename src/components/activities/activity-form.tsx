@@ -7,8 +7,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, SendHorizonal, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { activitySchema } from "@/lib/validations";
-import { summarizeActivityDraft } from "@/lib/actions/ai";
+import { summarizeActivityDraft, type SummaryDraft } from "@/lib/actions/ai";
 import { addActivity } from "@/lib/actions/activities";
+import { AiActionButton } from "@/components/ai/ai-action-button";
 import { QuotaIndicator } from "@/components/ai/quota-indicator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,20 +87,7 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
   const body = useWatch({ control, name: "body" });
   const sentiment = useWatch({ control, name: "sentiment" });
 
-  const summarize = async () => {
-    setServerError(null);
-    const result = await summarizeActivityDraft({ body: getValues("body") });
-    if (!result.ok) {
-      toast.error(result.error);
-      return;
-    }
-    setValue("summary", result.data.summary);
-    setValue("sentiment", result.data.sentiment);
-    setValue("nextStep", result.data.nextStep ?? "");
-    setValue("suggestedTask", result.data.suggestedTask ?? "");
-    setTruncated(result.data.truncated);
-    toast.success("AI draft ready - review and edit before saving");
-  };
+  const summarize = async () => summarizeActivityDraft({ body: getValues("body") });
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -130,7 +118,12 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
     !aiBudget.unknown &&
     (aiBudget.sharedRemaining <= 0 ||
       (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit));
-  const canSummarize = aiConfigured && (body?.trim().length ?? 0) >= 20 && !budgetExhausted;
+  const bodyChars = body?.trim().length ?? 0;
+  const summarizeDisabledReason = budgetExhausted
+    ? "Daily token budget reached - resets within 24h"
+    : bodyChars < 20
+      ? "Write at least 20 characters to summarize"
+      : undefined;
 
   return (
     <form onSubmit={onSubmit} className="grid gap-4">
@@ -199,23 +192,25 @@ export function ActivityForm({ contactId, deals, aiBudget, aiConfigured = false 
 
       {aiConfigured ? (
         <div>
-          <Button
-            type="button"
+          <AiActionButton
+            label={budgetExhausted ? "AI limit reached" : "Summarize with AI"}
             variant="secondary"
-            size="sm"
-            onClick={() => void summarize()}
-            disabled={!canSummarize || isSubmitting}
-            aria-busy={false}
-            title={
-              budgetExhausted
-                ? "Daily token budget reached - resets within 24h"
-                : "Summarize the details above with AI"
-            }
-          >
-            <Wand2 className="size-4" />
-            Summarize with AI
-          </Button>
-          {body && body.trim().length < 20 ? (
+            disabledReason={summarizeDisabledReason}
+            onClick={() => {
+              setServerError(null);
+              return summarize();
+            }}
+            onSuccess={(result) => {
+              const draft: SummaryDraft = result.data;
+              setValue("summary", draft.summary);
+              setValue("sentiment", draft.sentiment);
+              setValue("nextStep", draft.nextStep ?? "");
+              setValue("suggestedTask", draft.suggestedTask ?? "");
+              setTruncated(draft.truncated);
+              toast.success("AI draft ready - review and edit before saving");
+            }}
+          />
+          {bodyChars > 0 && bodyChars < 20 ? (
             <p className="mt-1 text-xs text-muted-foreground">Write at least 20 characters to summarize.</p>
           ) : null}
         </div>

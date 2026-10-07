@@ -13,9 +13,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { AiActionButton } from "@/components/ai/ai-action-button";
 
 interface BatchScoreDialogProps {
   aiConfigured: boolean;
@@ -69,11 +68,11 @@ export function BatchScoreDialog({ aiConfigured, onScored }: BatchScoreDialogPro
         if (next) void loadPreview();
       }}
     >
-      <AlertDialogTrigger asChild>
-        <Button variant="outline" disabled={!aiConfigured} title={aiConfigured ? undefined : "AI is not configured"}>
-          <Sparkles className="size-4" /> Score new leads
-        </Button>
-      </AlertDialogTrigger>
+      <AiActionButton
+        label="Score new leads"
+        disabledReason={!aiConfigured ? "AI is not configured" : undefined}
+        onClick={() => setOpen(true)}
+      />
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Score all new leads</AlertDialogTitle>

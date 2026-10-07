@@ -12,11 +12,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { AiActionButton } from "@/components/ai/ai-action-button";
 
 interface AiBudgetInfo {
   model: string;
@@ -85,18 +85,18 @@ export function EmailDraftDialog({ contactId, contactName, aiBudget, aiConfigure
         }
       }}
     >
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={!aiConfigured || exhausted} title={
+      <AiActionButton
+        label={exhausted ? "AI limit reached" : "Draft follow-up"}
+        icon={<MailWarning className="size-4" />}
+        disabledReason={
           !aiConfigured
             ? "AI is not configured"
             : exhausted
               ? "Daily AI limit reached - resets within 24h"
-              : "Draft a follow-up email with AI (uses 1 of your 20 daily requests)"
-        }>
-          <MailWarning className="size-4" />
-          {exhausted ? "AI limit reached" : "Draft follow-up"}
-        </Button>
-      </DialogTrigger>
+              : undefined
+        }
+        onClick={() => setOpen(true)}
+      />
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>AI follow-up draft — {contactName}</DialogTitle>

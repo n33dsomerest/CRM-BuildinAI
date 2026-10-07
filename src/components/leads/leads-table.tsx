@@ -5,10 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
   EllipsisVertical,
-  Loader2,
   Pencil,
   Search,
-  Sparkles,
   Trash2,
   UserPlus,
 } from "lucide-react";
@@ -18,6 +16,7 @@ import { deleteLead, updateLeadStatus } from "@/lib/actions/leads";
 import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { ConvertLeadDialog } from "@/components/leads/convert-lead-dialog";
 import { BatchScoreDialog } from "@/components/ai/batch-score-dialog";
+import { AiActionButton } from "@/components/ai/ai-action-button";
 import { scoreLead } from "@/lib/actions/ai";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { LeadSourceLabel, LeadStatusBadge } from "@/components/badges";
@@ -77,7 +76,11 @@ export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiCo
   const [converting, setConverting] = React.useState<LeadRow | null>(null);
   const [deleting, setDeleting] = React.useState<LeadRow | null>(null);
   const [pendingDelete, startDelete] = React.useTransition();
-  const [pendingScoring, startScoring] = React.useTransition();
+
+  const budgetExhausted =
+    !!aiBudget &&
+    !aiBudget.unknown &&
+    (aiBudget.sharedRemaining <= 0 || (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit));
 
   const pushParams = (updates: Record<string, string | undefined>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -214,42 +217,18 @@ export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiCo
                           {lead.score}
                         </span>
                       ) : (
-                        <Button
+                        <AiActionButton
+                          label={budgetExhausted ? "AI limit reached" : "Score"}
                           variant="ghost"
-                          size="sm"
-                          disabled={
-                            !!aiBudget &&
-                            !aiBudget.unknown &&
-                            (aiBudget.sharedRemaining <= 0 ||
-                              (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit))
+                          disabledReason={
+                            budgetExhausted ? "Daily token budget reached - resets within 24h" : undefined
                           }
-                          title={
-                            !!aiBudget &&
-                            !aiBudget.unknown &&
-                            (aiBudget.sharedRemaining <= 0 ||
-                              (aiBudget.userLimit > 0 && aiBudget.userUsed >= aiBudget.userLimit))
-                              ? "Daily token budget reached"
-                              : "Score with AI"
-                          }
-                          onClick={() => {
-                            startScoring(async () => {
-                              const result = await scoreLead(lead.id);
-                              if (result.ok) {
-                                toast.success(`${lead.name}: ${result.data.score} - ${result.data.reason}`);
-                                router.refresh();
-                              } else {
-                                toast.error(result.error);
-                              }
-                            });
+                          onClick={async () => await scoreLead(lead.id)}
+                          onSuccess={(result) => {
+                            toast.success(`${lead.name}: ${result.data.score} - ${result.data.reason}`);
+                            router.refresh();
                           }}
-                        >
-                          {pendingScoring ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="size-4" />
-                          )}
-                          Score
-                        </Button>
+                        />
                       )}
                     </TableCell>
                   ) : null}

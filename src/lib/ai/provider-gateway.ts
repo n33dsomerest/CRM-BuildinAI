@@ -102,7 +102,8 @@ export function createGatewayProvider(config: GatewayConfig, fetchImpl: typeof f
                 model,
                 messages: [
                   { role: "system", content: req.system },
-                  { role: "user", content: req.prompt },
+                  // Multi-turn (chat) when provided, otherwise the single-turn prompt.
+                  ...(req.messages ?? [{ role: "user" as const, content: req.prompt ?? "" }]),
                 ],
                 ...(req.maxOutputTokens ? { max_tokens: req.maxOutputTokens } : {}),
                 ...(req.json ? { response_format: { type: "json_object" } } : {}),

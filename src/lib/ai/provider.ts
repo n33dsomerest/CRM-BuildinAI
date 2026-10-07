@@ -3,9 +3,19 @@
  * OpenRouter-specific types stay inside provider-openrouter.ts.
  */
 
+/** One conversation turn (chat widget). */
+export interface AiMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface AiCompletionRequest {
   system: string;
-  prompt: string;
+  /** Single-turn user message. Mutually exclusive with `messages`. */
+  prompt?: string;
+  /** Multi-turn conversation (chat). Sent verbatim after the system message;
+   *  `prompt` must not be set alongside it. */
+  messages?: AiMessage[];
   /** Safety bound on output length — not a budget. */
   maxOutputTokens?: number;
   /** Ask the model for a JSON object (validated by the caller's Zod schema). */

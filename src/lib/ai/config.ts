@@ -14,6 +14,11 @@ export interface AiConfig {
   baseUrl: string;
   /** Ordered chain: [primary, ...fallbacks]. */
   models: string[];
+  /** Model for the free-form chat widget - deliberately its own env var
+   *  (AI_CHAT_MODEL) so a slow model can be swapped without touching code.
+   *  No chain: a conversation switching personas mid-stream is worse than a
+   *  clean failure. */
+  chatModel: string;
   /** Per-model daily token budgets, keyed by model id. A model absent from
    *  the map has an UNKNOWN budget: allowed to run, not counted against any
    *  limit - never invent a number for it. */
@@ -26,6 +31,7 @@ export interface AiConfig {
 
 export const DEFAULT_AI_BASE_URL = "https://gen.ai.kku.ac.th/okmd/api/v1";
 export const DEFAULT_AI_MODEL = "gemini-2.5-flash-lite";
+export const DEFAULT_AI_CHAT_MODEL = "deepseek-v4-flash";
 
 export function getAiConfig(): AiConfig | null {
   // `||` (not `??`) on purpose: AI_API_KEY="" must fall through to the
@@ -36,6 +42,7 @@ export function getAiConfig(): AiConfig | null {
 
   const baseUrl = (process.env.AI_BASE_URL?.trim() || DEFAULT_AI_BASE_URL).replace(/\/+$/, "");
   const primary = process.env.AI_MODEL?.trim() || DEFAULT_AI_MODEL;
+  const chatModel = process.env.AI_CHAT_MODEL?.trim() || DEFAULT_AI_CHAT_MODEL;
   const fallbacks = (process.env.AI_MODEL_FALLBACKS?.split(",") ?? [])
     .map((m) => m.trim())
     .filter(Boolean);
@@ -68,7 +75,7 @@ export function getAiConfig(): AiConfig | null {
     if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1) userShare = parsed;
   }
 
-  return { apiKey, baseUrl, models: [primary, ...fallbacks], budgets, userShare };
+  return { apiKey, baseUrl, models: [primary, ...fallbacks], chatModel, budgets, userShare };
 }
 
 export function isAiConfigured(): boolean {

@@ -9,6 +9,7 @@ vi.mock("@/lib/ai/config", () => ({
     apiKey: "gw-fake-key",
     baseUrl: "https://gateway.test/api/v1",
     models: ["vendor/primary", "vendor/fallback"],
+    chatModel: "vendor/primary",
     budgets: new Map([["vendor/primary", 5000], ["vendor/fallback", 5000]]),
   })),
   isAiConfigured: () => true,
@@ -439,6 +440,7 @@ describe("shared vs per-user budget scope (integration)", () => {
       apiKey: "gw-fake-key",
       baseUrl: "https://gateway.test/api/v1",
       models: ["vendor/primary", "vendor/fallback"],
+      chatModel: "vendor/primary",
       budgets: new Map([["vendor/primary", 5000], ["vendor/fallback", 5000]]),
       userShare: 0.5,
     });

@@ -25,7 +25,10 @@ const apiKey = envValue("AI_API_KEY");
 const baseUrl = (envValue("AI_BASE_URL") || "https://gen.ai.kku.ac.th/okmd/api/v1").replace(/\/+$/, "");
 const primary = envValue("AI_MODEL") || "gemini-2.5-flash-lite";
 const fallbacks = (envValue("AI_MODEL_FALLBACKS") || "").split(",").map((m) => m.trim()).filter(Boolean);
-const models = [primary, ...fallbacks];
+// The chat widget's model is probed too - a 404 on it must be caught before
+// deploy, same as a broken fallback.
+const chatModel = envValue("AI_CHAT_MODEL") || "deepseek-v4-flash";
+const models = [primary, ...fallbacks, ...(![primary, ...fallbacks].includes(chatModel) ? [chatModel] : [])];
 
 if (!apiKey) {
   console.error("[ai:check] AI_API_KEY is not set. Add it to .env (never commit it).");
@@ -87,7 +90,7 @@ try {
     console.error(`[ai:check] ${failures} of ${models.length} models unreachable - fix AI_MODEL_FALLBACKS before deploy.`);
     process.exit(1);
   }
-  console.log("[ai:check] all models in the chain are reachable.");
+  console.log("[ai:check] all models in the chain (plus the chat model) are reachable.");
 } catch (error) {
   console.error(`[ai:check] network failure: ${error instanceof Error ? error.message : error}`);
   process.exit(1);

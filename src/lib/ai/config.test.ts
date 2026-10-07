@@ -56,14 +56,30 @@ describe("getAiConfig", () => {
   });
 
   it("applies the default gateway and model when only the key is set", () => {
-    withEnv({ AI_API_KEY: "gw-key", AI_BASE_URL: undefined, AI_MODEL: undefined, AI_MODEL_FALLBACKS: undefined }, () => {
-      expect(getAiConfig()).toEqual({
-        apiKey: "gw-key",
-        baseUrl: "https://gen.ai.kku.ac.th/okmd/api/v1",
-        models: ["gemini-2.5-flash-lite"],
-        budgets: new Map(),
-        userShare: null,
-      });
+    withEnv(
+      {
+        AI_API_KEY: "gw-key",
+        AI_BASE_URL: undefined,
+        AI_MODEL: undefined,
+        AI_MODEL_FALLBACKS: undefined,
+        AI_CHAT_MODEL: undefined,
+      },
+      () => {
+        expect(getAiConfig()).toEqual({
+          apiKey: "gw-key",
+          baseUrl: "https://gen.ai.kku.ac.th/okmd/api/v1",
+          models: ["gemini-2.5-flash-lite"],
+          chatModel: "deepseek-v4-flash",
+          budgets: new Map(),
+          userShare: null,
+        });
+      }
+    );
+  });
+
+  it("reads the chat model from AI_CHAT_MODEL when set", () => {
+    withEnv({ AI_API_KEY: "gw-key", AI_CHAT_MODEL: "llama-4-scout" }, () => {
+      expect(getAiConfig()?.chatModel).toBe("llama-4-scout");
     });
   });
 

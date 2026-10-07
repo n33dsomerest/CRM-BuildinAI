@@ -118,6 +118,38 @@ export const summarizeDraftSchema = z.object({
   suggestedTask: optionalText(200),
 });
 
+/* Chat widget (validated both ways: request messages from the client, answer
+   from the model - never trust raw completions) */
+
+/** Conversation history sent per request; client holds the state, so the cap
+ *  bounds the token cost instead of the database. */
+export const CHAT_MESSAGE_CAP = 12;
+
+export const chatMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1).max(4000),
+});
+
+export const chatRequestSchema = z.object({
+  messages: z.array(chatMessageSchema).min(1).max(CHAT_MESSAGE_CAP),
+});
+
+export const chatAnswerSchema = z.object({
+  answer: z.string().min(1, "Answer must not be empty").max(4000),
+  // href is deliberately NOT startsWith("/") here: one stray model-emitted URL
+  // must not fail the whole turn. filterSuggestedActions (allow-list, in the
+  // action) is the only gate that decides which links reach the client.
+  suggestedActions: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(40),
+        href: z.string().max(200),
+      })
+    )
+    .max(3)
+    .optional(),
+});
+
 /* ── Tasks ───────────────────────────────────────────────────────────────── */
 
 export const taskSchema = z.object({

@@ -62,11 +62,22 @@ export async function hasTokenBudget(
   return used < limit;
 }
 
+/** UI-facing budget state for ONE model: the shared (per API key) figures as
+ *  the headline plus the caller's personal fairness share, or the unknown-
+ *  budget marker when the model has no AI_TOKEN_BUDGETS entry. Shared type so
+ *  every AI surface's props describe the same shape (import with `import type`
+ *  - this module also holds the DB-backed quota machinery). */
 export interface ModelBudgetState {
   model: string;
-  /** True when the model has no entry in AI_TOKEN_BUDGETS. */
-  unknown: true;
-  used: number;
+  /** True when the model has no entry in AI_TOKEN_BUDGETS - no honest number exists. */
+  unknown: boolean;
+  /** Shared (whole team, per API key) figures - the headline. */
+  sharedUsed: number;
+  sharedLimit: number;
+  sharedRemaining: number;
+  /** Personal fairness-share figures (0 when no share is configured). */
+  userUsed: number;
+  userLimit: number;
 }
 
 /** UI figures: the primary model's SHARED budget state plus the caller's
@@ -77,15 +88,7 @@ export async function getPrimaryModelBudget(
   budgets: Map<string, number>,
   userLimit?: number,
   now = new Date()
-): Promise<{
-  model: string;
-  unknown: boolean;
-  sharedUsed: number;
-  sharedLimit: number;
-  sharedRemaining: number;
-  userUsed: number;
-  userLimit: number;
-}> {
+): Promise<ModelBudgetState> {
   const limit = budgets.get(primaryModel);
   const sharedUsed = await modelTokensUsedAllUsers(primaryModel, now);
   const userUsed = await modelTokensUsed(userId, primaryModel, now);

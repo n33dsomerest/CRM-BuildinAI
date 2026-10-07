@@ -17,21 +17,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AiActionButton } from "@/components/ai/ai-action-button";
-
-interface AiBudgetInfo {
-  model: string;
-  unknown: boolean;
-  sharedUsed: number;
-  sharedLimit: number;
-  sharedRemaining: number;
-  userUsed: number;
-  userLimit: number;
-}
+import type { ModelBudgetState } from "@/lib/ai/quota";
 
 interface EmailDraftDialogProps {
   contactId: string;
   contactName: string;
-  aiBudget?: AiBudgetInfo | null;
+  aiBudget?: ModelBudgetState | null;
   aiConfigured?: boolean;
 }
 

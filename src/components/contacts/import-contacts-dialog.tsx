@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FileUp, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { importContactsCsv } from "@/lib/actions/contacts";
+import { MAX_CSV_BYTES, MAX_ROWS } from "@/lib/limits";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,8 +17,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-const MAX_ROWS = 2_000;
-const MAX_BYTES = 2 * 1024 * 1024;
+/** Client-side mirror of the server caps, imported from lib/limits.ts so the
+ *  early feedback cannot drift from the real limit. */
 
 function countDataRows(csv: string): number {
   const lines = csv.trim().split(/\r?\n/);
@@ -44,7 +45,7 @@ export function ImportContactsDialog() {
   };
 
   const handleImport = async () => {
-    if (csv.length > MAX_BYTES) {
+    if (csv.length > MAX_CSV_BYTES) {
       toast.error("CSV too large — max 2 MB per import");
       return;
     }

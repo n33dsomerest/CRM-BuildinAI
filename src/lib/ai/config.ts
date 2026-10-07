@@ -1,11 +1,12 @@
-import { createGatewayProvider } from "@/lib/ai/provider-gateway";
-import type { AiProvider } from "@/lib/ai/provider";
-
 /**
  * Resolves and validates the AI configuration once. If anything is missing the
  * callers return `fail("AI is not configured")` — never crash a render, never
  * silently no-op. A placeholder key (e.g. the literal YOUR_API_KEY) counts as
  * unconfigured - that is exactly the failure hit during setup.
+ *
+ * There is deliberately no getAiProvider() helper here: every action builds
+ * its own provider from this config, because the fallback chain needs
+ * per-action quota callbacks (hasBudget / remainingTokens).
  */
 
 export interface AiConfig {
@@ -69,10 +70,4 @@ export function getAiConfig(): AiConfig | null {
 
 export function isAiConfigured(): boolean {
   return getAiConfig() !== null;
-}
-
-export function getAiProvider(): AiProvider | null {
-  const config = getAiConfig();
-  if (!config) return null;
-  return createGatewayProvider(config);
 }

@@ -146,11 +146,10 @@ export const createUserSchema = z.object({
   role: z.enum(["ADMIN", "SALES"]),
 });
 
-export type SignInInput = z.infer<typeof signInSchema>;
-export type ContactInput = z.infer<typeof contactSchema>;
-export type LeadInput = z.infer<typeof leadSchema>;
-export type DealInput = z.infer<typeof dealSchema>;
-export type ActivityInput = z.infer<typeof activitySchema>;
-export type TaskInput = z.infer<typeof taskSchema>;
-export type AccountInput = z.infer<typeof accountSchema>;
+/* Form value types: components keep their own always-string types (controlled
+   inputs hold "" for empty optional fields and `emptyToUndefined` converts at
+   parse time; z.coerce fields like dealSchema.value accept the raw string), so
+   these z.infer OUTPUT aliases do not describe form state and would drift.
+   The one alias that matches its form exactly is imported for use; the rest
+   are deliberately not exported. */
 export type CreateUserInput = z.infer<typeof createUserSchema>;

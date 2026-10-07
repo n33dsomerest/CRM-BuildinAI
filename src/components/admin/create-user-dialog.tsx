@@ -6,7 +6,7 @@ import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, UserRoundPlus } from "lucide-react";
 import { toast } from "sonner";
-import { createUserSchema } from "@/lib/validations";
+import { createUserSchema, type CreateUserInput } from "@/lib/validations";
 import { createUser } from "@/lib/actions/users";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,13 +28,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export interface CreateUserFormValues {
-  name: string;
-  email: string;
-  password: string;
-  role: "ADMIN" | "SALES";
-}
-
 export function CreateUserDialog() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -47,8 +40,8 @@ export function CreateUserDialog() {
     setValue,
     control,
     formState: { errors, isSubmitting },
-  } = useForm<CreateUserFormValues>({
-    resolver: zodResolver(createUserSchema) as unknown as Resolver<CreateUserFormValues>,
+  } = useForm<CreateUserInput>({
+    resolver: zodResolver(createUserSchema) as unknown as Resolver<CreateUserInput>,
     defaultValues: { name: "", email: "", password: "", role: "SALES" },
   });
 
@@ -107,7 +100,7 @@ export function CreateUserDialog() {
             </div>
             <div className="grid gap-2">
               <Label>Role</Label>
-              <Select value={role} onValueChange={(value) => setValue("role", value as CreateUserFormValues["role"])}>
+              <Select value={role} onValueChange={(value) => setValue("role", value as CreateUserInput["role"])}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

@@ -1,11 +1,10 @@
 import Papa from "papaparse";
 import { contactImportRowSchema } from "@/lib/validations";
+import { ERROR_ABORT_RATIO, MAX_CSV_BYTES, MAX_ROWS } from "@/lib/limits";
 
-/** Shared CSV-import limits — exported for tests so they exercise the shipped values. */
-export const MAX_CSV_BYTES = 2 * 1024 * 1024; // 2 MB
-export const MAX_ROWS = 2_000;
-/** Abort the whole import when more than 10% of rows fail validation. */
-export const ERROR_ABORT_RATIO = 0.1;
+/** Shared CSV-import limits — single source in lib/limits.ts (client-importable
+ *  without papaparse); re-exported so tests exercise the shipped values. */
+export { ERROR_ABORT_RATIO, MAX_CSV_BYTES, MAX_ROWS };
 
 export interface ImportRow {
   name: string;

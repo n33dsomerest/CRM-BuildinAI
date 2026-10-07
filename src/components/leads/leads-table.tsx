@@ -18,6 +18,7 @@ import { ConvertLeadDialog } from "@/components/leads/convert-lead-dialog";
 import { BatchScoreDialog } from "@/components/ai/batch-score-dialog";
 import { AiActionButton } from "@/components/ai/ai-action-button";
 import { scoreLead } from "@/lib/actions/ai";
+import type { ModelBudgetState } from "@/lib/ai/quota";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { LeadSourceLabel, LeadStatusBadge } from "@/components/badges";
 import { EmptyState } from "@/components/empty-state";
@@ -46,22 +47,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-interface AiBudgetInfo {
-  model: string;
-  unknown: boolean;
-  sharedUsed: number;
-  sharedLimit: number;
-  sharedRemaining: number;
-  userUsed: number;
-  userLimit: number;
-}
-
 interface LeadsTableProps {
   data: Paged<LeadRow>;
   search: string;
   status: string;
   currentUserId: string;
-  aiBudget?: AiBudgetInfo | null;
+  aiBudget?: ModelBudgetState | null;
   aiConfigured?: boolean;
 }
 

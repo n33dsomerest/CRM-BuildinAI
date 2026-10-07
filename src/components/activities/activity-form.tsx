@@ -11,6 +11,7 @@ import { summarizeActivityDraft, type SummaryDraft } from "@/lib/actions/ai";
 import { addActivity } from "@/lib/actions/activities";
 import { AiActionButton } from "@/components/ai/ai-action-button";
 import { QuotaIndicator } from "@/components/ai/quota-indicator";
+import type { ModelBudgetState } from "@/lib/ai/quota";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,21 +36,11 @@ export interface ActivityFormValues {
   suggestedTask: string;
 }
 
-interface AiBudgetInfo {
-  model: string;
-  unknown: boolean;
-  sharedUsed: number;
-  sharedLimit: number;
-  sharedRemaining: number;
-  userUsed: number;
-  userLimit: number;
-}
-
 interface ActivityFormProps {
   contactId: string;
   deals: { id: string; title: string }[];
   /** Primary model's token budget state - exhausted/unknown disables Summarize. */
-  aiBudget?: AiBudgetInfo | null;
+  aiBudget?: ModelBudgetState | null;
   /** True when AI is unconfigured (no API key) - hides AI affordances. */
   aiConfigured?: boolean;
 }

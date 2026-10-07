@@ -636,8 +636,99 @@ export async function getAccountDetail(user: ScopedUser, id: string): Promise<Ac
 
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 
-export interface AuditLogQuery {
-  entity?: string;
+/** Per-model AI usage over the rolling 24h budget window (admin read-only
+ *  view). Rows are aggregated in JS - a day of AiUsage rows is small, and the
+ *  error-class / feature breakdowns need more than Prisma groupBy exposes. */
+export interface AiUsageModelSummary {
+  /** null when the row predates model attribution - shown as "(unattributed)". */
+  model: string | null;
+  calls: number;
+  okCalls: number;
+  failedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  features: { feature: string; calls: number; totalTokens: number }[];
+  errors: { errorClass: string; count: number }[];
+}
+
+export interface AiUsageSummary {
+  windowStart: Date;
+  models: AiUsageModelSummary[];
+  totalCalls: number;
+  totalTokens: number;
+}
+
+export async function getAiUsageSummary(now = new Date()): Promise<AiUsageSummary> {
+  const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const rows = await db.aiUsage.findMany({
+    where: { createdAt: { gt: windowStart } },
+    select: {
+      model: true,
+      feature: true,
+      ok: true,
+      error: true,
+      inputTokens: true,
+      outputTokens: true,
+      totalTokens: true,
+    },
+  });
+
+  const byModel = new Map<string, AiUsageModelSummary>();
+  for (const row of rows) {
+    const key = row.model ?? "(unattributed)";
+    let summary = byModel.get(key);
+    if (!summary) {
+      summary = {
+        model: row.model,
+        calls: 0,
+        okCalls: 0,
+        failedCalls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        features: [],
+        errors: [],
+      };
+      byModel.set(key, summary);
+    }
+    summary.calls += 1;
+    if (row.ok) summary.okCalls += 1;
+    else summary.failedCalls += 1;
+    summary.inputTokens += row.inputTokens;
+    summary.outputTokens += row.outputTokens;
+    summary.totalTokens += row.totalTokens;
+
+    const feature = summary.features.find((f) => f.feature === row.feature);
+    if (feature) {
+      feature.calls += 1;
+      feature.totalTokens += row.totalTokens;
+    } else {
+      summary.features.push({ feature: row.feature, calls: 1, totalTokens: row.totalTokens });
+    }
+
+    if (!row.ok && row.error) {
+      const error = summary.errors.find((e) => e.errorClass === row.error);
+      if (error) error.count += 1;
+      else summary.errors.push({ errorClass: row.error, count: 1 });
+    }
+  }
+
+  const models = [...byModel.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+  for (const summary of models) {
+    summary.features.sort((a, b) => b.totalTokens - a.totalTokens);
+    summary.errors.sort((a, b) => b.count - a.count);
+  }
+
+  return {
+    windowStart,
+    models,
+    totalCalls: rows.length,
+    totalTokens: rows.reduce((sum, r) => sum + r.totalTokens, 0),
+  };
+}
+
+export interface AuditLogQuery {  entity?: string;
   action?: string;
   userId?: string;
   /** Inclusive lower bound, YYYY-MM-DD */

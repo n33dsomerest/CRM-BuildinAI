@@ -22,6 +22,7 @@ import type { ModelBudgetState } from "@/lib/ai/quota";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { LeadSourceLabel, LeadStatusBadge } from "@/components/badges";
 import { EmptyState } from "@/components/empty-state";
+import { formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -201,12 +202,17 @@ export function LeadsTable({ data, search, status, currentUserId, aiBudget, aiCo
                   {aiConfigured ? (
                     <TableCell>
                       {lead.score !== null ? (
-                        <span
-                          className="inline-flex size-8 items-center justify-center rounded-full border text-xs font-semibold tabular-nums"
-                          title={lead.scoreReason ?? "AI suggestion"}
-                        >
-                          {lead.score}
-                        </span>
+                        <div>
+                          <span
+                            className="inline-flex size-8 items-center justify-center rounded-full border text-xs font-semibold tabular-nums"
+                            title={lead.scoreReason ?? "AI suggestion"}
+                          >
+                            {lead.score}
+                          </span>
+                          <p className="text-[10px] text-muted-foreground" suppressHydrationWarning>
+                            scored {formatRelative(lead.scoredAt)}
+                          </p>
+                        </div>
                       ) : (
                         <AiActionButton
                           label={budgetExhausted ? "AI limit reached" : "Score"}

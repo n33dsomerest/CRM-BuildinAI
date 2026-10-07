@@ -14,6 +14,7 @@ import {
   Moon,
   ScrollText,
   Search,
+  Sparkles,
   Sun,
   UserPlus,
   Users,
@@ -55,6 +56,7 @@ const NAV_MAIN = [
 const NAV_ADMIN = [
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/audit", label: "Audit Log", icon: ScrollText },
+  { href: "/admin/ai-usage", label: "AI Usage", icon: Sparkles },
 ];
 
 interface AppShellProps {

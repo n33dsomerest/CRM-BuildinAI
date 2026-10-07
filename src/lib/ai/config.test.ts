@@ -43,6 +43,18 @@ describe("getAiConfig", () => {
     });
   });
 
+  it("falls back to OPENROUTER_API_KEY when AI_API_KEY is empty (the .env.example default)", () => {
+    withEnv({ AI_API_KEY: "", OPENROUTER_API_KEY: "or-key" }, () => {
+      expect(getAiConfig()?.apiKey).toBe("or-key");
+    });
+  });
+
+  it("prefers AI_API_KEY over the OPENROUTER_API_KEY fallback", () => {
+    withEnv({ AI_API_KEY: "gw-key", OPENROUTER_API_KEY: "or-key" }, () => {
+      expect(getAiConfig()?.apiKey).toBe("gw-key");
+    });
+  });
+
   it("applies the default gateway and model when only the key is set", () => {
     withEnv({ AI_API_KEY: "gw-key", AI_BASE_URL: undefined, AI_MODEL: undefined, AI_MODEL_FALLBACKS: undefined }, () => {
       expect(getAiConfig()).toEqual({

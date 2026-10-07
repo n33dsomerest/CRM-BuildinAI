@@ -28,7 +28,10 @@ export const DEFAULT_AI_BASE_URL = "https://gen.ai.kku.ac.th/okmd/api/v1";
 export const DEFAULT_AI_MODEL = "gemini-2.5-flash-lite";
 
 export function getAiConfig(): AiConfig | null {
-  const apiKey = process.env.AI_API_KEY?.trim() ?? process.env.OPENROUTER_API_KEY?.trim() ?? "";
+  // `||` (not `??`) on purpose: AI_API_KEY="" must fall through to the
+  // OPENROUTER_API_KEY fallback - .env.example ships the empty value, and
+  // nullish coalescing would treat it as a (useless) configured key.
+  const apiKey = process.env.AI_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim() || "";
   if (!apiKey || /^YOUR_API_KEY$/i.test(apiKey)) return null;
 
   const baseUrl = (process.env.AI_BASE_URL?.trim() || DEFAULT_AI_BASE_URL).replace(/\/+$/, "");

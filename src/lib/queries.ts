@@ -122,41 +122,89 @@ export interface Paged<T> {
 
 /* ── Shared mappers ──────────────────────────────────────────────────────── */
 
-/** Raw `stage.findMany({ include: { deals } })` row shape. */
-export interface StageWithDeals {
+/**
+ * Query shapes for the funnel.
+ *
+ * These are deliberately FLAT (`Stage[]` + `DealWithRelations[]`, not
+ * `StageWithDeals`). Prisma splits a nested `include` into one query per relation
+ * and runs them in sequence, so `stage.findMany({ include: { deals: { include:
+ * { contact: { include: { account } }, owner } } } })` costs 8 sequential
+ * round-trips. Against a pooled Postgres in another region every round-trip is
+ * ~150-250ms of pure latency, so the row COUNT hardly matters - the SERIAL
+ * chain does. Two flat queries issued together run concurrently and finish in
+ * roughly one round-trip's worth of latency.
+ *
+ * Grouping deals into their stage happens in `mapStagesToFunnel` instead of in
+ * SQL: that is free locally, and it keeps a single place responsible for the
+ * funnel's shape.
+ */
+
+/** Raw `deal.findMany` row with the relations a funnel card needs. */
+export interface DealWithRelations {
+  id: string;
+  title: string;
+  value: Prisma.Decimal;
+  stageId: string;
+  expectedCloseDate: Date | null;
+  contactId: string;
+  contact: { name: string; account: { name: string } };
+  owner: { id: string; name: string };
+}
+
+/** Stage columns the funnel renders. */
+export interface FunnelStage {
   id: string;
   name: string;
   order: number;
   probability: number;
   isWon: boolean;
   isLost: boolean;
-  deals: {
-    id: string;
-    title: string;
-    value: Prisma.Decimal;
-    expectedCloseDate: Date | null;
-    contactId: string;
-    contact: { name: string; account: { name: string } };
-    owner: { id: string; name: string };
-  }[];
 }
 
-/** Maps stage query rows (ordered by `order`) into funnel columns with totals. */
-export function mapStagesToFunnel(stages: StageWithDeals[]): FunnelColumn[] {
+/** The exact `select` both funnel readers share, so the two pages cannot drift. */
+const FUNNEL_DEAL_SELECT = {
+  id: true,
+  title: true,
+  value: true,
+  stageId: true,
+  expectedCloseDate: true,
+  contactId: true,
+  contact: { select: { name: true, account: { select: { name: true } } } },
+  owner: { select: { id: true, name: true } },
+} satisfies Prisma.DealSelect;
+
+/** Maps a flat deal row (Decimal → number) into the serializable card type. */
+export function mapDeal(d: DealWithRelations): DealCard {
+  return {
+    id: d.id,
+    title: d.title,
+    value: Number(d.value),
+    stageId: d.stageId,
+    expectedCloseDate: d.expectedCloseDate,
+    contactName: d.contact.name,
+    accountName: d.contact.account.name,
+    ownerName: d.owner.name,
+    ownerId: d.owner.id,
+    contactId: d.contactId,
+  };
+}
+
+/**
+ * Groups flat deal rows into ordered funnel columns with per-stage totals.
+ * Deals whose stageId matches no stage are dropped rather than leaking into a
+ * synthetic column - the stage list is the authority on what exists.
+ */
+export function mapStagesToFunnel(stages: FunnelStage[], deals: DealWithRelations[]): FunnelColumn[] {
+  const byStage = new Map<string, DealCard[]>();
+  for (const stage of stages) byStage.set(stage.id, []);
+  for (const deal of deals) {
+    const bucket = byStage.get(deal.stageId);
+    if (bucket) bucket.push(mapDeal(deal));
+  }
+
   return stages.map((stage) => {
-    const deals: DealCard[] = stage.deals.map((d) => ({
-      id: d.id,
-      title: d.title,
-      value: Number(d.value),
-      stageId: stage.id,
-      expectedCloseDate: d.expectedCloseDate,
-      contactName: d.contact.name,
-      accountName: d.contact.account.name,
-      ownerName: d.owner.name,
-      ownerId: d.owner.id,
-      contactId: d.contactId,
-    }));
-    const totalValue = deals.reduce((sum, d) => sum + d.value, 0);
+    const cards = byStage.get(stage.id) ?? [];
+    const totalValue = cards.reduce((sum, d) => sum + d.value, 0);
     return {
       id: stage.id,
       name: stage.name,
@@ -164,44 +212,34 @@ export function mapStagesToFunnel(stages: StageWithDeals[]): FunnelColumn[] {
       probability: stage.probability,
       isWon: stage.isWon,
       isLost: stage.isLost,
-      deals,
+      deals: cards,
       totalValue,
       weightedValue: Math.round((totalValue * stage.probability) / 100),
     };
   });
 }
 
+/**
+ * Loads stages + scoped deals concurrently and shapes them into the funnel.
+ * Shared by the dashboard and the deals board so the two stay in lockstep.
+ */
+async function loadFunnel(user: ScopedUser): Promise<FunnelColumn[]> {
+  const [stages, deals] = await Promise.all([
+    db.stage.findMany({ orderBy: { order: "asc" } }),
+    db.deal.findMany({ where: ownerFilter(user), orderBy: { createdAt: "desc" }, select: FUNNEL_DEAL_SELECT }),
+  ]);
+  return mapStagesToFunnel(stages, deals);
+}
+
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 
 export async function getDashboardData(user: ScopedUser): Promise<DashboardData> {
-  const stages = await db.stage.findMany({
-    orderBy: { order: "asc" },
-    include: {
-      deals: {
-        where: ownerFilter(user),
-        select: {
-          id: true,
-          title: true,
-          value: true,
-          stageId: true,
-          expectedCloseDate: true,
-          contactId: true,
-          contact: { select: { name: true, account: { select: { name: true } } } },
-          owner: { select: { id: true, name: true } },
-        },
-      },
-    },
-  });
-
-  const funnel = mapStagesToFunnel(stages);
-
-  const openStages = funnel.filter((s) => !s.isWon && !s.isLost);
-  const wonStage = funnel.find((s) => s.isWon);
-  const lostStage = funnel.find((s) => s.isLost);
-  const wonCount = wonStage?.deals.length ?? 0;
-  const lostCount = lostStage?.deals.length ?? 0;
-
-  const [totalContacts, recentActivities, myTasks] = await Promise.all([
+  // ONE Promise.all, no awaits before it. Previously the funnel was awaited on
+  // its own first, then three more reads - that serialised every round-trip
+  // against a ~150-250ms-per-hop pooled Postgres in another region.
+  const [stages, deals, totalContacts, recentActivities, myTasks] = await Promise.all([
+    db.stage.findMany({ orderBy: { order: "asc" } }),
+    db.deal.findMany({ where: ownerFilter(user), orderBy: { createdAt: "desc" }, select: FUNNEL_DEAL_SELECT }),
     db.contact.count({ where: ownerFilter(user) }),
     db.activity.findMany({
       where: { contact: ownerFilter(user) },
@@ -224,6 +262,14 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
     }),
   ]);
 
+  const funnel = mapStagesToFunnel(stages, deals);
+
+  const openStages = funnel.filter((s) => !s.isWon && !s.isLost);
+  const wonStage = funnel.find((s) => s.isWon);
+  const lostStage = funnel.find((s) => s.isLost);
+  const wonCount = wonStage?.deals.length ?? 0;
+  const lostCount = lostStage?.deals.length ?? 0;
+
   return {
     kpis: {
       pipelineValue: openStages.reduce((sum, s) => sum + s.totalValue, 0),
@@ -242,26 +288,7 @@ export async function getDashboardData(user: ScopedUser): Promise<DashboardData>
 /* ── Deals board ─────────────────────────────────────────────────────────── */
 
 export async function getDealsBoard(user: ScopedUser): Promise<FunnelColumn[]> {
-  const stages = await db.stage.findMany({
-    orderBy: { order: "asc" },
-    include: {
-      deals: {
-        where: ownerFilter(user),
-        select: {
-          id: true,
-          title: true,
-          value: true,
-          stageId: true,
-          expectedCloseDate: true,
-          contactId: true,
-          contact: { select: { name: true, account: { select: { name: true } } } },
-          owner: { select: { id: true, name: true } },
-        },
-      },
-    },
-  });
-
-  return mapStagesToFunnel(stages);
+  return loadFunnel(user);
 }
 
 /* ── Contacts ────────────────────────────────────────────────────────────── */
@@ -328,31 +355,50 @@ export async function getContactsPage(user: ScopedUser, query: ContactQuery): Pr
 }
 
 export async function getContactDetail(user: ScopedUser, id: string): Promise<ContactDetail | null> {
+  // Phase 1 is deliberately NOT merged with phase 2: the ownerFilter check is
+  // the authorisation gate, and the three child reads below are keyed on
+  // contactId alone. Firing them in parallel would mean querying another
+  // owner's records before we know whether this contact is theirs to read.
+  // One round-trip to prove ownership, then one round-trip for everything else.
   const contact = await db.contact.findFirst({
     where: { id, ...ownerFilter(user) },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      position: true,
+      status: true,
+      accountId: true,
+      ownerId: true,
       account: true,
       owner: { select: { name: true } },
-      deals: {
-        orderBy: { createdAt: "desc" },
-        include: { stage: { select: { name: true, isWon: true, isLost: true } } },
-      },
-      activities: {
-        orderBy: { occurredAt: "desc" },
-        take: 50,
-        include: { user: { select: { name: true } }, deal: { select: { title: true } } },
-      },
-      tasks: {
-        orderBy: { dueDate: "asc" },
-        include: {
-          contact: { select: { name: true } },
-          deal: { select: { title: true } },
-          assignee: { select: { name: true } },
-        },
-      },
     },
   });
   if (!contact) return null;
+
+  const [deals, activities, tasks] = await Promise.all([
+    db.deal.findMany({
+      where: { contactId: contact.id },
+      orderBy: { createdAt: "desc" },
+      include: { stage: { select: { name: true, isWon: true, isLost: true } } },
+    }),
+    db.activity.findMany({
+      where: { contactId: contact.id },
+      orderBy: { occurredAt: "desc" },
+      take: 50,
+      include: { user: { select: { name: true } }, deal: { select: { title: true } } },
+    }),
+    db.task.findMany({
+      where: { contactId: contact.id },
+      orderBy: { dueDate: "asc" },
+      include: {
+        contact: { select: { name: true } },
+        deal: { select: { title: true } },
+        assignee: { select: { name: true } },
+      },
+    }),
+  ]);
 
   return {
     id: contact.id,
@@ -372,7 +418,7 @@ export async function getContactDetail(user: ScopedUser, id: string): Promise<Co
       website: contact.account.website,
       phone: contact.account.phone,
     },
-    deals: contact.deals.map((d) => ({
+    deals: deals.map((d) => ({
       id: d.id,
       title: d.title,
       value: Number(d.value),
@@ -381,8 +427,8 @@ export async function getContactDetail(user: ScopedUser, id: string): Promise<Co
       isLost: d.stage.isLost,
       expectedCloseDate: d.expectedCloseDate,
     })),
-    activities: contact.activities.map(mapActivity),
-    tasks: contact.tasks.map(mapTask),
+    activities: activities.map(mapActivity),
+    tasks: tasks.map(mapTask),
   };
 }
 
